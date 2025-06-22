@@ -1,4 +1,3 @@
-
 import { GameObject } from "../../common/types";
 import { BaseGameObjectComponent } from "./base-game-object-component";
 

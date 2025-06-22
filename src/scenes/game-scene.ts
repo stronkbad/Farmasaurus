@@ -8,11 +8,15 @@ import { Wisp } from '../components/game-objects/enemies/wisp';
 import { CharacterGameObject } from '../components/game-objects/common/character-game-object';
 import { DIRECTION } from '../common/common';
 import { PLAYER_START_MAX_HEALTH } from '../common/config';
+import { Pot } from '../components/game-objects/objects/pot';
+import { Chest } from '../components/game-objects/objects/chest';
+import { GameObject } from '../common/types';
 
 export class GameScene extends Phaser.Scene {
   #controls!: KeyboardComponent;
   #player!: Player;
   #enemyGroup!: Phaser.GameObjects.Group;
+  #blockingGroup!: Phaser.GameObjects.Group;
 
   constructor() {
     super({
@@ -27,7 +31,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     this.#controls = new KeyboardComponent(this.input.keyboard);
-    this.add.text(this.scale.width / 2, this.scale.height / 2, 'Game Scene 2', { fontFamily: ASSET_KEYS.FONT_PRESS_START_2P }).setOrigin(0.5);
+    this.add
+      .text(this.scale.width / 2, this.scale.height / 2, 'Game Scene 2', { fontFamily: ASSET_KEYS.FONT_PRESS_START_2P })
+      .setOrigin(0.5);
 
     this.#player = new Player({
       scene: this,
@@ -37,35 +43,70 @@ export class GameScene extends Phaser.Scene {
       currentLife: PLAYER_START_MAX_HEALTH,
     });
     // this.#player.setCollideWorldBounds(true);
-    
+
     this.#enemyGroup = this.add.group(
       [
-      new Spider({
-        scene: this,
-        position: { x: this.scale.width / 2, y: this.scale.height / 2 + 50},
-      }),
-      new Wisp({
-        scene: this,
-        position: { x: this.scale.width / 2, y: this.scale.height / 2 - 50},
-      }),
-    ], 
-    {
-      runChildUpdate: true,
-    });
+        new Spider({
+          scene: this,
+          position: { x: this.scale.width / 2, y: this.scale.height / 2 + 50 },
+        }),
+        new Wisp({
+          scene: this,
+          position: { x: this.scale.width / 2, y: this.scale.height / 2 - 50 },
+        }),
+      ],
+      {
+        runChildUpdate: true,
+      },
+    );
+
+    this.#blockingGroup = this.add.group(
+      [
+        new Pot({
+          scene: this,
+          position: { x: this.scale.width / 2 + 90, y: this.scale.height / 2 },
+        }),
+
+        new Chest({
+          scene: this,
+          position: { x: this.scale.width / 2 - 90, y: this.scale.height / 2 },
+          requiresBossKey: false,
+        }),
+
+        new Chest({
+          scene: this,
+          position: { x: this.scale.width / 2 - 90, y: this.scale.height / 2 - 80 },
+          requiresBossKey: true,
+        }),
+      ],
+      {
+        runChildUpdate: true,
+      },
+    );
 
     this.#registerColliders();
   }
 
   #registerColliders(): void {
+    //register collisions between enemies and current "room"
     this.#enemyGroup.getChildren().forEach((enemy) => {
       const enemyGameObject = enemy as CharacterGameObject;
       enemyGameObject.setCollideWorldBounds(true);
-    })
+    });
+    // Register collisions between player and enemies
     this.physics.add.overlap(this.#player, this.#enemyGroup, (player, enemy) => {
-      this.#player.hit(DIRECTION.DOWN, 1)
+      this.#player.hit(DIRECTION.DOWN, 1);
       const enemyGameObject = enemy as CharacterGameObject;
       enemyGameObject.hit(this.#player.direction, 1);
     });
-  }
 
+    // Register collisions between player and objects
+    this.physics.add.collider(this.#player, this.#blockingGroup, (player, GameObject) => {
+      this.#player.collideWithGameObject(GameObject as GameObject);
+    });
+
+    // Register collisions between enemies and objects
+    this.physics.add.collider(this.#enemyGroup, this.#blockingGroup, (enemy, GameObject) => {
+    });
+  }
 }

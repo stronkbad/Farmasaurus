@@ -1,6 +1,6 @@
 import * as Phaser from 'phaser';
 import {  AnimationConfig } from '../../game-object/animation-component';
-import {  Position } from '../../../common/types';
+import {  GameObject, Position } from '../../../common/types';
 import { InputComponent } from '../../input/input-component';
 import { ASSET_KEYS, PLAYER_ANIMATION_KEYS } from '../../../common/assets';
 import { PLAYER_HURT_PUSH_BACK_SPEED, PLAYER_INVULNERABLE_AFTER_HIT_ANIMATION_DURATION, PLAYER_SPEED } from '../../../common/config';
@@ -11,6 +11,7 @@ import { CharacterGameObject } from '../common/character-game-object';
 import { Hurtstate } from '../../state-machine/states/character/hurt-state';
 import { flash } from '../../../common/juice-utils';
 import { Deathstate } from '../../state-machine/states/character/death-state';
+import { CollidingObjectsComponent } from '../../game-object/colliding-objects-component';
 
 export type PlayerConfig = {
   scene: Phaser.Scene;
@@ -21,6 +22,8 @@ export type PlayerConfig = {
 };
 
 export class Player extends CharacterGameObject {
+  #collidingObjectsComponent: CollidingObjectsComponent;
+
   constructor(config: PlayerConfig) {
     // create animation config for component
     const animationConfig: AnimationConfig = {
@@ -58,6 +61,8 @@ export class Player extends CharacterGameObject {
       currentLife: config.currentLife,
     });
 
+    this.#collidingObjectsComponent = new CollidingObjectsComponent(this);
+
     //add state machine
     this._stateMachine.addState(new Idlestate(this));
     this._stateMachine.addState(new Movestate(this));
@@ -78,4 +83,15 @@ export class Player extends CharacterGameObject {
   get physicsBody(): Phaser.Physics.Arcade.Body {
     return this.body as Phaser.Physics.Arcade.Body;
   }
+
+  public collideWithGameObject(gameObject: GameObject): void {
+    this.#collidingObjectsComponent.addObject(gameObject);
+  }
+
+  public update(): void{
+    super.update();
+    console.log(this.#collidingObjectsComponent.objects);
+    this.#collidingObjectsComponent.reset();
+  }
+
 }
