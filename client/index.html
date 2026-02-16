@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lootlands Online</title>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&family=MedievalSharp&display=swap');
+
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+
+      html, body {
+        width: 100%; height: 100%;
+        overflow: hidden;
+        background: #000;
+        font-family: 'MedievalSharp', 'Times New Roman', serif;
+        color: #d4c4a0;
+      }
+
+      #game-container {
+        width: 100%; height: 100%;
+        display: flex; align-items: center; justify-content: center;
+      }
+
+      /* ====== UO-Style HUD ====== */
+      #hud {
+        position: fixed;
+        top: 10px; left: 50%;
+        transform: translateX(-50%);
+        z-index: 100;
+        display: none;
+        text-align: center;
+      }
+      .hud-bars {
+        display: flex;
+        gap: 8px;
+        background: linear-gradient(180deg, #2a2218, #1a1510);
+        border: 2px solid #5a4a2a;
+        border-radius: 3px;
+        padding: 6px 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05);
+      }
+      .bar-group {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+      }
+      .bar-label {
+        font-size: 11px;
+        font-weight: bold;
+        min-width: 28px;
+        text-align: right;
+      }
+      .bar-label.hp { color: #cc4444; }
+      .bar-label.mp { color: #4488cc; }
+      .bar-label.sp { color: #ccaa44; }
+      .stat-bar {
+        width: 120px;
+        height: 12px;
+        background: #111;
+        border: 1px solid #444;
+        position: relative;
+        overflow: hidden;
+      }
+      .stat-bar-fill {
+        height: 100%;
+        transition: width 0.3s;
+      }
+      .stat-bar-fill.hp { background: linear-gradient(180deg, #cc3333, #882222); }
+      .stat-bar-fill.mp { background: linear-gradient(180deg, #3366cc, #224488); }
+      .stat-bar-fill.sp { background: linear-gradient(180deg, #ccaa33, #887722); }
+
+      /* ====== Chat (UO journal style) ====== */
+      #chat-container {
+        position: fixed;
+        bottom: 8px; left: 8px;
+        width: 380px;
+        z-index: 100;
+        display: none;
+      }
+      #chat-log {
+        height: 130px;
+        overflow-y: auto;
+        background: linear-gradient(180deg, rgba(20,15,10,0.85), rgba(10,8,5,0.9));
+        border: 1px solid #5a4a2a;
+        border-bottom: none;
+        color: #d4c4a0;
+        padding: 8px;
+        font-size: 12px;
+        line-height: 1.5;
+        font-family: 'MedievalSharp', serif;
+      }
+      #chat-log::-webkit-scrollbar { width: 8px; }
+      #chat-log::-webkit-scrollbar-track { background: #1a1510; }
+      #chat-log::-webkit-scrollbar-thumb { background: #5a4a2a; border-radius: 2px; }
+      #chat-input {
+        width: 100%;
+        padding: 6px 10px;
+        background: rgba(10,8,5,0.95);
+        border: 1px solid #5a4a2a;
+        color: #d4c4a0;
+        font-size: 12px;
+        font-family: 'MedievalSharp', serif;
+        outline: none;
+      }
+      #chat-input:focus { border-color: #8a7a4a; }
+      #chat-input::placeholder { color: #6a5a3a; }
+
+      /* ====== Name Dialog (UO gump style) ====== */
+      #name-dialog {
+        position: fixed;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.9);
+        display: flex;
+        align-items: center; justify-content: center;
+        z-index: 999;
+      }
+      .dialog-box {
+        background: linear-gradient(180deg, #2a2218, #1a1510);
+        border: 3px solid #5a4a2a;
+        padding: 40px 48px;
+        text-align: center;
+        box-shadow: 0 0 40px rgba(0,0,0,0.8), inset 0 1px 0 rgba(255,255,255,0.05);
+      }
+      .dialog-box h2 {
+        color: #c4a460;
+        font-size: 22px;
+        margin-bottom: 6px;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+        letter-spacing: 3px;
+      }
+      .dialog-box .subtitle {
+        color: #7a6a4a;
+        font-size: 11px;
+        margin-bottom: 24px;
+        font-style: italic;
+      }
+      .dialog-box input {
+        padding: 8px 14px;
+        background: #0a0806;
+        border: 2px solid #5a4a2a;
+        color: #d4c4a0;
+        font-family: 'MedievalSharp', serif;
+        font-size: 14px;
+        width: 220px;
+        outline: none;
+        text-align: center;
+      }
+      .dialog-box input:focus { border-color: #8a7a4a; }
+      .dialog-box input::placeholder { color: #5a4a2a; }
+      .dialog-box button {
+        display: block;
+        margin: 20px auto 0;
+        padding: 10px 36px;
+        background: linear-gradient(180deg, #5a4a2a, #3a2a1a);
+        border: 2px solid #7a6a3a;
+        color: #d4c4a0;
+        font-family: 'MedievalSharp', serif;
+        font-size: 14px;
+        cursor: pointer;
+        letter-spacing: 2px;
+        text-transform: uppercase;
+      }
+      .dialog-box button:hover {
+        background: linear-gradient(180deg, #6a5a3a, #4a3a2a);
+        border-color: #9a8a4a;
+      }
+
+      /* ====== Coordinates display ====== */
+      #coords {
+        position: fixed;
+        bottom: 8px; right: 8px;
+        background: rgba(20,15,10,0.8);
+        border: 1px solid #5a4a2a;
+        padding: 4px 10px;
+        font-size: 11px;
+        color: #8a7a5a;
+        z-index: 100;
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="name-dialog">
+      <div class="dialog-box">
+        <h2>LOOTLANDS</h2>
+        <div class="subtitle">Online</div>
+        <input id="name-input" type="text" placeholder="Thy name..." maxlength="16" />
+        <button id="name-submit">Enter World</button>
+      </div>
+    </div>
+
+    <div id="hud">
+      <div class="hud-bars">
+        <div class="bar-group">
+          <span class="bar-label hp">Hits</span>
+          <div class="stat-bar"><div class="stat-bar-fill hp" id="health-fill" style="width:100%"></div></div>
+        </div>
+        <div class="bar-group">
+          <span class="bar-label mp">Mana</span>
+          <div class="stat-bar"><div class="stat-bar-fill mp" id="mana-fill" style="width:100%"></div></div>
+        </div>
+        <div class="bar-group">
+          <span class="bar-label sp">Stam</span>
+          <div class="stat-bar"><div class="stat-bar-fill sp" id="stam-fill" style="width:100%"></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="game-container"></div>
+
+    <div id="chat-container">
+      <div id="chat-log"></div>
+      <input id="chat-input" type="text" placeholder="Press Enter to speak..." maxlength="200" />
+    </div>
+
+    <div id="coords"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

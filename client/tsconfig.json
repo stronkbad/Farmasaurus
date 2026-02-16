@@ -5,9 +5,12 @@
     "moduleResolution": "bundler",
     "esModuleInterop": true,
     "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
     "resolveJsonModule": true,
-    "noEmit": true
+    "paths": {
+      "@shared/*": ["../shared/*"]
+    }
   },
-  "include": ["shared/**/*.ts"],
-  "exclude": ["node_modules"]
+  "include": ["src/**/*.ts", "../shared/**/*.ts"]
 }
