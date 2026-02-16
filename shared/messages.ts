@@ -11,7 +11,7 @@ export enum ClientMessageType {
 
 export interface ClientJoinMessage { type: ClientMessageType.JOIN; name: string; }
 // direction = which way to move this tick (null = stay still)
-export interface ClientInputMessage { type: ClientMessageType.INPUT; direction: Direction | null; seq: number; }
+export interface ClientInputMessage { type: ClientMessageType.INPUT; direction: Direction | null; seq: number; running: boolean; }
 export interface ClientChatMessage { type: ClientMessageType.CHAT; text: string; }
 export interface ClientInteractMessage { type: ClientMessageType.INTERACT; targetId: string; }
 export interface ClientAttackMessage { type: ClientMessageType.ATTACK; targetId: string; }
@@ -45,6 +45,7 @@ export interface PlayerState {
   health: number;
   maxHealth: number;
   isMoving: boolean;
+  isRunning: boolean;
   isAttacking: boolean;
   targetId: string | null;
 }

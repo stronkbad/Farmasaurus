@@ -3,7 +3,7 @@ import { type ClientInputMessage } from '../../shared/messages';
 import type { PlayerState, ServerCombatMissMessage } from '../../shared/messages';
 import { ServerMessageType } from '../../shared/messages';
 import {
-  PLAYER_WALK_MS, PLAYER_MAX_HEALTH, PLAYER_ATTACK, PLAYER_DEFENSE,
+  PLAYER_WALK_MS, PLAYER_RUN_MS, PLAYER_MAX_HEALTH, PLAYER_ATTACK, PLAYER_DEFENSE,
   TICK_MS, WORLD_TILES_X, WORLD_TILES_Y, MELEE_RANGE, ATTACK_COOLDOWN_MS,
 } from '../../shared/constants';
 import { DIRECTION, DIR_DX, DIR_DY, type Direction } from '../../shared/types';
@@ -18,6 +18,8 @@ export interface ServerPlayer {
   moveTimer: number;
   moveDuration: number;
   queuedDirection: Direction | null;
+  queuedRunning: boolean;
+  isRunning: boolean;
   direction: Direction;
   health: number; maxHealth: number;
   attack: number; defense: number;
@@ -50,6 +52,8 @@ export class PlayerManager {
       moveTimer: 0,
       moveDuration: PLAYER_WALK_MS,
       queuedDirection: null,
+      queuedRunning: false,
+      isRunning: false,
       direction: DIRECTION.DOWN,
       health: PLAYER_MAX_HEALTH,
       maxHealth: PLAYER_MAX_HEALTH,
@@ -70,6 +74,7 @@ export class PlayerManager {
     const player = this.#players.get(playerId);
     if (!player || player.isDead) return;
     player.queuedDirection = input.direction;
+    player.queuedRunning = input.running ?? false;
     player.lastProcessedSeq = input.seq;
   }
 
@@ -136,7 +141,7 @@ export class PlayerManager {
     }
   }
 
-  updateAll(isTileWalkable: (x: number, y: number) => boolean): void {
+  updateAll(isTileWalkable: (x: number, y: number, fromX?: number, fromY?: number) => boolean): void {
     for (const player of this.#players.values()) {
       if (player.isDead) continue;
 
@@ -161,7 +166,15 @@ export class PlayerManager {
 
       setDirection(player, dx, dy);
 
-      if (!isTileWalkable(nx, ny)) continue;
+      // Diagonal validation: both perpendicular cardinal dirs must be passable
+      if (dx !== 0 && dy !== 0) {
+        if (!isTileWalkable(player.tileX + dx, player.tileY, player.tileX, player.tileY) ||
+            !isTileWalkable(player.tileX, player.tileY + dy, player.tileX, player.tileY)) {
+          continue;
+        }
+      }
+
+      if (!isTileWalkable(nx, ny, player.tileX, player.tileY)) continue;
 
       player.fromX = player.tileX;
       player.fromY = player.tileY;
@@ -169,6 +182,8 @@ export class PlayerManager {
       player.tileY = ny;
       player.moveState = 'moving';
       player.moveTimer = 0;
+      player.isRunning = player.queuedRunning;
+      player.moveDuration = player.isRunning ? PLAYER_RUN_MS : PLAYER_WALK_MS;
     }
   }
 
@@ -188,6 +203,7 @@ export class PlayerManager {
       direction: p.direction, animation: anim,
       health: p.health, maxHealth: p.maxHealth,
       isMoving: p.moveState === 'moving',
+      isRunning: p.isRunning,
       isAttacking: p.isAttacking,
       targetId: p.targetId,
     };

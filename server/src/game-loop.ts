@@ -51,7 +51,7 @@ export class GameLoop {
     this.#entityManager.buildOccupancy(this.#playerManager.getPlayerTiles());
 
     // 2. Process player tile movement (checks occupancy for collision)
-    this.#playerManager.updateAll((x, y) => this.#entityManager.isTileWalkable(x, y));
+    this.#playerManager.updateAll((x, y, fromX?, fromY?) => this.#entityManager.isTileWalkable(x, y, fromX, fromY));
 
     // 3. Rebuild occupancy after player moves
     this.#entityManager.buildOccupancy(this.#playerManager.getPlayerTiles());

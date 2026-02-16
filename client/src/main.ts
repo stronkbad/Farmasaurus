@@ -2,13 +2,14 @@ import { Application, Container, Text } from 'pixi.js';
 import { GameSocket } from './network/socket';
 import { KeyboardInput } from './input/keyboard';
 import { MouseInput } from './input/mouse';
+import { MouseMovementInput } from './input/mouse-movement';
 import { Camera } from './rendering/camera';
 import { TileMap } from './rendering/tilemap';
 import { worldToScreen } from './rendering/isometric';
 import { PlayerEntity } from './entities/player';
 import { EnemyEntity } from './entities/enemy';
 import { ChatUI } from './ui/chat';
-import { isTerrainWalkable } from '@shared/terrain';
+import { isTerrainWalkable, isElevationWalkable, getTileElevation, Z_PIXEL_HEIGHT } from '@shared/terrain';
 import {
   ClientMessageType,
   ServerMessageType,
@@ -22,7 +23,7 @@ import {
   type ServerEntityDeathMessage,
   type ServerCombatMissMessage,
 } from '@shared/messages';
-import { TICK_MS, MELEE_RANGE, PLAYER_WALK_MS } from '@shared/constants';
+import { TICK_MS, MELEE_RANGE, PLAYER_WALK_MS, PLAYER_RUN_MS } from '@shared/constants';
 import { DIR_DX, DIR_DY, type Direction } from '@shared/types';
 
 // Smooth easing for tile-to-tile movement (ease-in-out cubic)
@@ -45,6 +46,8 @@ let predictedTileY = 0;
 let predictedFromX = 0;
 let predictedFromY = 0;
 let predictedMoveTimer = 0;
+let predictedMoveDuration = PLAYER_WALK_MS;
+let predictedIsRunning = false;
 let predictedMoveState: 'idle' | 'moving' = 'idle';
 const pendingInputs: { seq: number; direction: Direction | null; resultTileX: number; resultTileY: number }[] = [];
 
@@ -72,6 +75,7 @@ async function main() {
   app.stage.addChild(worldContainer);
 
   const entityLayer = new Container();
+  entityLayer.sortableChildren = true;
   const floatingTextLayer = new Container();
 
   const camera = new Camera(worldContainer, app.screen.width, app.screen.height);
@@ -84,6 +88,8 @@ async function main() {
   const keyboard = new KeyboardInput();
   const mouse = new MouseInput(camera);
   mouse.attach(app.canvas);
+  const mouseMovement = new MouseMovementInput();
+  mouseMovement.attach(app.canvas);
 
   const socket = new GameSocket();
   const chat = new ChatUI(socket, keyboard);
@@ -257,7 +263,8 @@ async function main() {
           predictedFromX = ps.fromX;
           predictedFromY = ps.fromY;
           const screen = worldToScreen(ps.x, ps.y);
-          camera.snapTo(screen.screenX, screen.screenY);
+          const spawnZ = getTileElevation(ps.x, ps.y);
+          camera.snapTo(screen.screenX, screen.screenY - spawnZ * Z_PIXEL_HEIGHT);
         }
 
         // Update health/stats only (NOT visual position — that's prediction-driven)
@@ -348,8 +355,9 @@ async function main() {
     t.anchor.set(0.5);
     c.addChild(t);
     const screen = worldToScreen(worldX, worldY);
+    const ftZ = getTileElevation(Math.round(worldX), Math.round(worldY));
     c.x = screen.screenX + (Math.random() - 0.5) * 16;
-    c.y = screen.screenY - 28;
+    c.y = screen.screenY - ftZ * Z_PIXEL_HEIGHT - 28;
     // Start slightly scaled up for impact, then shrink
     c.scale.set(1.3);
     layer.addChild(c);
@@ -361,31 +369,50 @@ async function main() {
   // ============================================
   let inputAccumulator = 0;
 
+  // Unified input: mouse movement takes priority over keyboard when right-button held
+  function getMovementInput(): { direction: Direction | null; running: boolean } {
+    if (mouseMovement.isActive) {
+      return mouseMovement.getMovement();
+    }
+    const dir = keyboard.getDirection();
+    return { direction: dir, running: false }; // WASD is always walk speed
+  }
+
   app.ticker.add((ticker) => {
     const dt = ticker.deltaMS;
+
+    // Feed character viewport position to mouse movement input
+    if (localPlayer) {
+      const screen = worldToScreen(localPlayer.worldX, localPlayer.worldY);
+      const viewportX = screen.screenX * camera.zoom + worldContainer.x;
+      const viewportY = screen.screenY * camera.zoom + worldContainer.y;
+      mouseMovement.updateCharacterScreenPos(viewportX, viewportY);
+    }
 
     // Advance local prediction movement timer
     if (predictedMoveState === 'moving') {
       predictedMoveTimer += dt;
-      if (predictedMoveTimer >= PLAYER_WALK_MS) {
+      if (predictedMoveTimer >= predictedMoveDuration) {
         // Arrive at destination tile
         predictedFromX = predictedTileX;
         predictedFromY = predictedTileY;
 
         // Chain into next move immediately if direction held (no pause between tiles)
-        const nextDir = keyboard.getDirection();
-        if (nextDir) {
-          const dx = DIR_DX[nextDir];
-          const dy = DIR_DY[nextDir];
+        const input = getMovementInput();
+        if (input.direction) {
+          const dx = DIR_DX[input.direction];
+          const dy = DIR_DY[input.direction];
           const nx = predictedTileX + dx;
           const ny = predictedTileY + dy;
-          if (nx >= 1 && ny >= 1 && isTerrainWalkable(nx, ny)) {
+          if (nx >= 1 && ny >= 1 && isTerrainWalkable(nx, ny) && isElevationWalkable(predictedTileX, predictedTileY, nx, ny)) {
             predictedFromX = predictedTileX;
             predictedFromY = predictedTileY;
             predictedTileX = nx;
             predictedTileY = ny;
+            predictedIsRunning = input.running;
+            predictedMoveDuration = input.running ? PLAYER_RUN_MS : PLAYER_WALK_MS;
             // Carry over excess time for seamless chaining
-            predictedMoveTimer = predictedMoveTimer - PLAYER_WALK_MS;
+            predictedMoveTimer = predictedMoveTimer - predictedMoveDuration;
           } else {
             predictedMoveState = 'idle';
             predictedMoveTimer = 0;
@@ -403,32 +430,34 @@ async function main() {
       inputAccumulator -= TICK_MS;
 
       if (myPlayerId && socket.connected) {
-        const direction = keyboard.getDirection();
+        const input = getMovementInput();
         const seq = ++inputSeq;
 
-        socket.send({ type: ClientMessageType.INPUT, direction, seq });
+        socket.send({ type: ClientMessageType.INPUT, direction: input.direction, seq, running: input.running });
 
         // Client-side tile prediction
-        if (direction && predictedMoveState === 'idle') {
-          const dx = DIR_DX[direction];
-          const dy = DIR_DY[direction];
+        if (input.direction && predictedMoveState === 'idle') {
+          const dx = DIR_DX[input.direction];
+          const dy = DIR_DY[input.direction];
           const nx = predictedTileX + dx;
           const ny = predictedTileY + dy;
 
-          // Bounds + terrain check (can't check full occupancy client-side)
-          if (nx >= 1 && ny >= 1 && isTerrainWalkable(nx, ny)) {
+          // Bounds + terrain + elevation check (can't check full occupancy client-side)
+          if (nx >= 1 && ny >= 1 && isTerrainWalkable(nx, ny) && isElevationWalkable(predictedTileX, predictedTileY, nx, ny)) {
             predictedFromX = predictedTileX;
             predictedFromY = predictedTileY;
             predictedTileX = nx;
             predictedTileY = ny;
             predictedMoveState = 'moving';
             predictedMoveTimer = 0;
+            predictedIsRunning = input.running;
+            predictedMoveDuration = input.running ? PLAYER_RUN_MS : PLAYER_WALK_MS;
 
-            pendingInputs.push({ seq, direction, resultTileX: nx, resultTileY: ny });
+            pendingInputs.push({ seq, direction: input.direction, resultTileX: nx, resultTileY: ny });
           }
-        } else if (direction) {
+        } else if (input.direction) {
           // Still moving - queue for later but don't predict movement yet
-          pendingInputs.push({ seq, direction, resultTileX: predictedTileX, resultTileY: predictedTileY });
+          pendingInputs.push({ seq, direction: input.direction, resultTileX: predictedTileX, resultTileY: predictedTileY });
         }
       }
     }
@@ -436,11 +465,13 @@ async function main() {
     // Update local player visual position based on prediction
     if (localPlayer) {
       if (predictedMoveState === 'moving') {
-        const rawProgress = Math.min(predictedMoveTimer / PLAYER_WALK_MS, 1);
+        const rawProgress = Math.min(predictedMoveTimer / predictedMoveDuration, 1);
         const progress = smoothStep(rawProgress);
         localPlayer.setTileMove(predictedFromX, predictedFromY, predictedTileX, predictedTileY, progress);
+        localPlayer.isRunning = predictedIsRunning;
       } else {
         localPlayer.setPosition(predictedTileX, predictedTileY);
+        localPlayer.isRunning = false;
       }
 
       localPlayer.update(dt);
@@ -449,7 +480,8 @@ async function main() {
       tilemap.updateView(localPlayer.worldX, localPlayer.worldY);
 
       const screen = worldToScreen(localPlayer.worldX, localPlayer.worldY);
-      camera.setTarget(screen.screenX, screen.screenY);
+      const camZ = getTileElevation(Math.round(localPlayer.worldX), Math.round(localPlayer.worldY));
+      camera.setTarget(screen.screenX, screen.screenY - camZ * Z_PIXEL_HEIGHT);
       camera.update();
 
       coordsEl.textContent = `${predictedTileX}\u00B0N ${predictedTileY}\u00B0E`;
@@ -476,7 +508,7 @@ async function main() {
       }
     }
 
-    entityLayer.children.sort((a, b) => a.y - b.y);
+    // Depth sorting handled by sortableChildren + zIndex set in entity classes
   });
 
   window.addEventListener('resize', () => {

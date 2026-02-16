@@ -2,6 +2,7 @@ import { Container, Graphics, Text } from 'pixi.js';
 import { worldToScreen } from '../rendering/isometric';
 import type { PlayerState } from '@shared/messages';
 import { HIT_FLASH_MS } from '@shared/constants';
+import { getTileElevation, Z_PIXEL_HEIGHT } from '@shared/terrain';
 
 // Draw at 4x resolution, scale down for crisp detail
 const S = 4;
@@ -23,6 +24,7 @@ export class PlayerEntity {
 
   // Walk animation
   #isMoving = false;
+  #isRunning = false;
   #lastFrame = -1;
 
   // Attack animation
@@ -38,6 +40,7 @@ export class PlayerEntity {
   worldY = 0;
   id: string;
   name: string;
+  set isRunning(val: boolean) { this.#isRunning = val; }
   health = 50;
   maxHealth = 50;
   direction = 'DOWN';
@@ -417,6 +420,7 @@ export class PlayerEntity {
     this.#toY = state.y;
     this.#moveProgress = state.moveProgress;
     this.#isMoving = state.moveProgress < 1;
+    this.#isRunning = state.isRunning ?? false;
 
     this.#updateVisualPosition();
   }
@@ -427,9 +431,17 @@ export class PlayerEntity {
     this.worldX = this.#fromX + (this.#toX - this.#fromX) * p;
     this.worldY = this.#fromY + (this.#toY - this.#fromY) * p;
 
+    // Interpolate elevation between from-tile and to-tile
+    const fromZ = getTileElevation(Math.round(this.#fromX), Math.round(this.#fromY));
+    const toZ = getTileElevation(Math.round(this.#toX), Math.round(this.#toY));
+    const z = fromZ + (toZ - fromZ) * p;
+
     const screen = worldToScreen(this.worldX, this.worldY);
     this.container.x = screen.screenX;
-    this.container.y = screen.screenY;
+    this.container.y = screen.screenY - z * Z_PIXEL_HEIGHT;
+
+    // Isometric depth for correct sort order (unaffected by elevation)
+    this.container.zIndex = Math.floor((this.worldX + this.worldY) * 100);
   }
 
   update(dt: number): void {
@@ -445,8 +457,10 @@ export class PlayerEntity {
       this.#bodyContainer.x = this.#attackDirX * lunge * lungeAmount;
       this.#bodyContainer.y = -this.#attackDirY * lunge * lungeAmount - Math.sin(atkProgress * Math.PI) * 2;
     } else if (this.#isMoving) {
-      const stepCycle = Math.sin(this.#moveProgress * Math.PI * 4);
-      this.#bodyContainer.y = -Math.abs(stepCycle) * 2.5;
+      const bobFreq = this.#isRunning ? 6 : 4;
+      const bobAmp = this.#isRunning ? 3.5 : 2.5;
+      const stepCycle = Math.sin(this.#moveProgress * Math.PI * bobFreq);
+      this.#bodyContainer.y = -Math.abs(stepCycle) * bobAmp;
       this.#bodyContainer.x = 0;
     } else {
       this.#bodyContainer.y = 0;
@@ -456,7 +470,8 @@ export class PlayerEntity {
     if (isAttacking) {
       this.#drawBody(0, true);
     } else if (this.#isMoving) {
-      const stepCycle = Math.sin(this.#moveProgress * Math.PI * 4);
+      const bobFreq = this.#isRunning ? 6 : 4;
+      const stepCycle = Math.sin(this.#moveProgress * Math.PI * bobFreq);
       const frame = stepCycle > 0.2 ? 1 : stepCycle < -0.2 ? 2 : 0;
       this.#drawBody(frame, false);
     } else {
@@ -483,9 +498,11 @@ export class PlayerEntity {
     this.#moveProgress = 1;
     this.#isMoving = false;
 
+    const z = getTileElevation(Math.round(x), Math.round(y));
     const screen = worldToScreen(this.worldX, this.worldY);
     this.container.x = screen.screenX;
-    this.container.y = screen.screenY;
+    this.container.y = screen.screenY - z * Z_PIXEL_HEIGHT;
+    this.container.zIndex = Math.floor((this.worldX + this.worldY) * 100);
   }
 
   setTileMove(fromX: number, fromY: number, toX: number, toY: number, progress: number): void {

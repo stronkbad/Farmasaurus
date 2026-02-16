@@ -1,6 +1,6 @@
 // World - all positions are integer tile coordinates
-export const TILE_WIDTH = 32;  // screen pixels wide per diamond
-export const TILE_HEIGHT = 16;  // screen pixels tall per diamond (2:1 ratio = classic isometric)
+export const TILE_WIDTH = 44;  // screen pixels wide per diamond (UO standard)
+export const TILE_HEIGHT = 22; // screen pixels tall per diamond (2:1 ratio)
 export const WORLD_TILES_X = 8000;
 export const WORLD_TILES_Y = 8000;
 
@@ -10,12 +10,16 @@ export const TICK_RATE = 20;
 export const TICK_MS = 1000 / TICK_RATE;
 
 // Player - tile-based movement (milliseconds per tile)
-export const PLAYER_WALK_MS = 400;  // 2.5 tiles/sec - quick pace
+export const PLAYER_WALK_MS = 400;  // 2.5 tiles/sec
+export const PLAYER_RUN_MS = 200;   // 5.0 tiles/sec
 export const PLAYER_MAX_HEALTH = 50;
 export const PLAYER_MAX_MANA = 30;
 export const PLAYER_MAX_STAMINA = 40;
 export const PLAYER_ATTACK = 8;
 export const PLAYER_DEFENSE = 3;
+
+// Mouse movement
+export const RUN_DISTANCE_THRESHOLD = 100; // screen px from character; beyond = run
 
 // Enemies - tile-based movement (milliseconds per tile)
 export const ENEMY_SPIDER_MOVE_MS = 700;

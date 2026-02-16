@@ -39,3 +39,15 @@ export enum EntityType {
   ORC = 'ORC',
   NPC = 'NPC',
 }
+
+// Clockwise from North — maps atan2 octant index to Direction
+export const DIRECTION_BY_OCTANT: Direction[] = [
+  'UP',         // North
+  'UP_RIGHT',   // Northeast
+  'RIGHT',      // East
+  'DOWN_RIGHT', // Southeast
+  'DOWN',       // South
+  'DOWN_LEFT',  // Southwest
+  'LEFT',       // West
+  'UP_LEFT',    // Northwest
+];

@@ -1,6 +1,6 @@
 import { Container, Graphics } from 'pixi.js';
 import { TILE_WIDTH, TILE_HEIGHT, WORLD_TILES_X, WORLD_TILES_Y } from '@shared/constants';
-import { TileType, getTileType, seededRandom } from '@shared/terrain';
+import { TileType, getTileType, getTileElevation, getTileCornerHeights, Z_PIXEL_HEIGHT, seededRandom } from '@shared/terrain';
 import { worldToScreen } from './isometric';
 
 // Base color per tile type
@@ -30,6 +30,10 @@ const TILE_VARIANTS: Record<TileType, number[]> = {
 };
 
 const VIEW_RADIUS = 60;
+
+// Scale factors for tile detail offsets (designed at 32x16, scale to current tile size)
+const DX = TILE_WIDTH / 32;   // X-axis detail spread multiplier
+const DY = TILE_HEIGHT / 16;  // Y-axis detail spread multiplier
 
 function getTileColor(x: number, y: number): number {
   const type = getTileType(x, y);
@@ -100,31 +104,46 @@ export class TileMap {
         const ty = cy + dy;
         if (tx < 0 || ty < 0 || tx >= WORLD_TILES_X || ty >= WORLD_TILES_Y) continue;
 
-        const color = getTileColor(tx, ty);
+        let color = getTileColor(tx, ty);
         const tileType = getTileType(tx, ty);
         const screen = worldToScreen(tx, ty);
         const sx = screen.screenX;
         const sy = screen.screenY;
 
-        // Base diamond
+        // Elevation: corner heights for deformed diamond
+        const [cN, cE, cS, cW] = getTileCornerHeights(tx, ty);
+        const centerZ = getTileElevation(tx, ty);
+        const zOff = centerZ * Z_PIXEL_HEIGHT;
+
+        // Slope-based shading (fake directional light from SE)
+        const avgNW = (cN + cW) / 2;
+        const avgSE = (cS + cE) / 2;
+        const slopeShade = (avgNW - avgSE) * 4;
+        if (slopeShade > 0.5) {
+          color = darkenColor(color, Math.min(Math.floor(slopeShade * 3), 30));
+        } else if (slopeShade < -0.5) {
+          color = lightenColor(color, Math.min(Math.floor(-slopeShade * 2), 15));
+        }
+
+        // Base diamond with per-corner elevation offsets
         this.#tileGraphics.poly([
-          { x: sx, y: sy - hh },
-          { x: sx + hw, y: sy },
-          { x: sx, y: sy + hh },
-          { x: sx - hw, y: sy },
+          { x: sx, y: sy - hh - cN * Z_PIXEL_HEIGHT },
+          { x: sx + hw, y: sy - cE * Z_PIXEL_HEIGHT },
+          { x: sx, y: sy + hh - cS * Z_PIXEL_HEIGHT },
+          { x: sx - hw, y: sy - cW * Z_PIXEL_HEIGHT },
         ]);
         this.#tileGraphics.fill({ color });
 
         const rng = seededRandom(tx * 12345 + ty * 67890);
 
-        // Per-tile-type detail rendering
-        this.#drawTileDetails(tileType, sx, sy, color, rng);
+        // Per-tile-type detail rendering (offset by center Z)
+        this.#drawTileDetails(tileType, sx, sy - zOff, color, rng);
 
-        // Edge blending
-        this.#drawEdgeBlend(tx, ty, tileType, sx, sy);
+        // Edge blending (offset by center Z)
+        this.#drawEdgeBlend(tx, ty, tileType, sx, sy - zOff);
 
-        // Decorations (trees, rocks, flowers etc)
-        this.#drawDecorations(tileType, tx, ty, sx, sy, rng);
+        // Decorations (offset by center Z)
+        this.#drawDecorations(tileType, tx, ty, sx, sy - zOff, rng);
       }
     }
   }
@@ -136,13 +155,12 @@ export class TileMap {
       case TileType.GRASS:
       case TileType.GRASS_LIGHT:
       case TileType.GRASS_DARK: {
-        // Multiple grass blades per tile
         const bladeCount = 2 + Math.floor(rng() * 3);
         for (let i = 0; i < bladeCount; i++) {
-          const bx = sx + (rng() - 0.5) * 14;
-          const by = sy + (rng() - 0.5) * 6;
-          const height = 2 + rng() * 3;
-          const lean = (rng() - 0.5) * 2;
+          const bx = sx + (rng() - 0.5) * 14 * DX;
+          const by = sy + (rng() - 0.5) * 6 * DY;
+          const height = (2 + rng() * 3) * DY;
+          const lean = (rng() - 0.5) * 2 * DX;
           const gc = type === TileType.GRASS_DARK
             ? (rng() > 0.5 ? 0x2a5a18 : 0x1e4e12)
             : type === TileType.GRASS_LIGHT
@@ -152,50 +170,44 @@ export class TileMap {
           g.lineTo(bx + lean, by - height);
           g.stroke({ color: gc, alpha: 0.6, width: 0.7 });
         }
-        // Occasional small dirt patch
         if (rng() < 0.12) {
-          const px = sx + (rng() - 0.5) * 8;
-          const py = sy + (rng() - 0.5) * 3;
-          g.ellipse(px, py, 1.5 + rng(), 0.8 + rng() * 0.5);
+          const px = sx + (rng() - 0.5) * 8 * DX;
+          const py = sy + (rng() - 0.5) * 3 * DY;
+          g.ellipse(px, py, (1.5 + rng()) * DX, (0.8 + rng() * 0.5) * DY);
           g.fill({ color: 0x7a6a42, alpha: 0.35 });
         }
-        // Tiny wildflower
         if (rng() < 0.06) {
-          const fx = sx + (rng() - 0.5) * 10;
-          const fy = sy + (rng() - 0.5) * 4;
+          const fx = sx + (rng() - 0.5) * 10 * DX;
+          const fy = sy + (rng() - 0.5) * 4 * DY;
           const flowerColor = [0xee4444, 0xeeee44, 0xbb44ee, 0xffaa22, 0x44aaee][Math.floor(rng() * 5)];
-          g.circle(fx, fy - 1.5, 0.8);
+          g.circle(fx, fy - 1.5 * DY, 0.8);
           g.fill({ color: flowerColor, alpha: 0.8 });
-          // Stem
-          g.moveTo(fx, fy - 0.7);
-          g.lineTo(fx, fy + 0.5);
+          g.moveTo(fx, fy - 0.7 * DY);
+          g.lineTo(fx, fy + 0.5 * DY);
           g.stroke({ color: 0x3a6a28, alpha: 0.5, width: 0.5 });
         }
         break;
       }
 
       case TileType.SAND: {
-        // Sand ripple lines
         if (rng() < 0.5) {
-          const rx = sx + (rng() - 0.5) * 10;
-          const ry = sy + (rng() - 0.5) * 4;
-          g.moveTo(rx - 4, ry);
-          g.quadraticCurveTo(rx, ry - 0.8, rx + 4, ry);
+          const rx = sx + (rng() - 0.5) * 10 * DX;
+          const ry = sy + (rng() - 0.5) * 4 * DY;
+          g.moveTo(rx - 4 * DX, ry);
+          g.quadraticCurveTo(rx, ry - 0.8 * DY, rx + 4 * DX, ry);
           g.stroke({ color: lightenColor(baseColor, 15), alpha: 0.35, width: 0.5 });
         }
-        // Sand grain dots
         const dotCount = 1 + Math.floor(rng() * 3);
         for (let i = 0; i < dotCount; i++) {
-          const dotX = sx + (rng() - 0.5) * 13;
-          const dotY = sy + (rng() - 0.5) * 5.5;
+          const dotX = sx + (rng() - 0.5) * 13 * DX;
+          const dotY = sy + (rng() - 0.5) * 5.5 * DY;
           g.circle(dotX, dotY, 0.3 + rng() * 0.3);
           g.fill({ color: lightenColor(baseColor, 20), alpha: 0.3 });
         }
-        // Occasional shell
         if (rng() < 0.04) {
-          const shx = sx + (rng() - 0.5) * 10;
-          const shy = sy + (rng() - 0.5) * 3;
-          g.ellipse(shx, shy, 1, 0.7);
+          const shx = sx + (rng() - 0.5) * 10 * DX;
+          const shy = sy + (rng() - 0.5) * 3 * DY;
+          g.ellipse(shx, shy, 1 * DX, 0.7 * DY);
           g.fill({ color: 0xeeddcc, alpha: 0.6 });
           g.stroke({ color: 0xccbbaa, alpha: 0.3, width: 0.4 });
         }
@@ -203,66 +215,59 @@ export class TileMap {
       }
 
       case TileType.DIRT: {
-        // Pebbles (multiple)
         const pebbleCount = Math.floor(rng() * 3);
         for (let i = 0; i < pebbleCount; i++) {
-          const px = sx + (rng() - 0.5) * 12;
-          const py = sy + (rng() - 0.5) * 5;
+          const px = sx + (rng() - 0.5) * 12 * DX;
+          const py = sy + (rng() - 0.5) * 5 * DY;
           const pr = 0.4 + rng() * 0.6;
           g.circle(px, py, pr);
           g.fill({ color: darkenColor(baseColor, 15 + Math.floor(rng() * 20)), alpha: 0.5 });
         }
-        // Dirt texture lines (small cracks)
         if (rng() < 0.3) {
-          const cx = sx + (rng() - 0.5) * 10;
-          const cy = sy + (rng() - 0.5) * 4;
-          g.moveTo(cx, cy);
-          g.lineTo(cx + (rng() - 0.5) * 4, cy + (rng() - 0.5) * 2);
+          const cx2 = sx + (rng() - 0.5) * 10 * DX;
+          const cy2 = sy + (rng() - 0.5) * 4 * DY;
+          g.moveTo(cx2, cy2);
+          g.lineTo(cx2 + (rng() - 0.5) * 4 * DX, cy2 + (rng() - 0.5) * 2 * DY);
           g.stroke({ color: darkenColor(baseColor, 20), alpha: 0.3, width: 0.4 });
         }
-        // Occasional weed/dead grass
         if (rng() < 0.1) {
-          const wx = sx + (rng() - 0.5) * 8;
-          const wy = sy + (rng() - 0.5) * 3;
+          const wx = sx + (rng() - 0.5) * 8 * DX;
+          const wy = sy + (rng() - 0.5) * 3 * DY;
           g.moveTo(wx, wy);
-          g.lineTo(wx + (rng() - 0.5) * 2, wy - 2);
-          g.moveTo(wx + 1, wy);
-          g.lineTo(wx + 1 + (rng() - 0.5), wy - 1.5);
+          g.lineTo(wx + (rng() - 0.5) * 2 * DX, wy - 2 * DY);
+          g.moveTo(wx + 1 * DX, wy);
+          g.lineTo(wx + (1 + (rng() - 0.5)) * DX, wy - 1.5 * DY);
           g.stroke({ color: 0x8a7a42, alpha: 0.4, width: 0.5 });
         }
         break;
       }
 
       case TileType.DEEP_WATER: {
-        // Depth gradient (darker at center)
-        g.ellipse(sx, sy, 6, 3);
+        g.ellipse(sx, sy, 6 * DX, 3 * DY);
         g.fill({ color: darkenColor(baseColor, 12), alpha: 0.25 });
-        // Subtle ripple
         if (rng() < 0.3) {
-          const wx = sx + (rng() - 0.5) * 8;
-          const wy = sy + (rng() - 0.5) * 3;
-          g.moveTo(wx - 3, wy);
-          g.quadraticCurveTo(wx, wy - 0.5, wx + 3, wy);
+          const wx = sx + (rng() - 0.5) * 8 * DX;
+          const wy = sy + (rng() - 0.5) * 3 * DY;
+          g.moveTo(wx - 3 * DX, wy);
+          g.quadraticCurveTo(wx, wy - 0.5 * DY, wx + 3 * DX, wy);
           g.stroke({ color: 0xffffff, alpha: 0.06, width: 0.4 });
         }
         break;
       }
 
       case TileType.SHALLOW_WATER: {
-        // Water shimmer/ripples
         const rippleCount = 1 + Math.floor(rng() * 2);
         for (let i = 0; i < rippleCount; i++) {
-          const wx = sx + (rng() - 0.5) * 10;
-          const wy = sy + (rng() - 0.5) * 4;
-          const wlen = 2 + rng() * 3;
+          const wx = sx + (rng() - 0.5) * 10 * DX;
+          const wy = sy + (rng() - 0.5) * 4 * DY;
+          const wlen = (2 + rng() * 3) * DX;
           g.moveTo(wx - wlen, wy);
-          g.quadraticCurveTo(wx, wy - 0.6, wx + wlen, wy);
+          g.quadraticCurveTo(wx, wy - 0.6 * DY, wx + wlen, wy);
           g.stroke({ color: 0xffffff, alpha: 0.1, width: 0.5 });
         }
-        // Light reflection spot
         if (rng() < 0.15) {
-          const lx = sx + (rng() - 0.5) * 8;
-          const ly = sy + (rng() - 0.5) * 3;
+          const lx = sx + (rng() - 0.5) * 8 * DX;
+          const ly = sy + (rng() - 0.5) * 3 * DY;
           g.circle(lx, ly, 0.6);
           g.fill({ color: 0xffffff, alpha: 0.1 });
         }
@@ -270,33 +275,29 @@ export class TileMap {
       }
 
       case TileType.ROCK: {
-        // Rock cracks (more detailed)
         if (rng() < 0.4) {
-          const cx = sx + (rng() - 0.5) * 10;
-          const cy = sy + (rng() - 0.5) * 4;
-          const dx1 = (rng() - 0.5) * 5;
-          const dy1 = (rng() - 0.5) * 2.5;
-          g.moveTo(cx, cy);
-          g.lineTo(cx + dx1, cy + dy1);
-          // Branch crack
+          const cx2 = sx + (rng() - 0.5) * 10 * DX;
+          const cy2 = sy + (rng() - 0.5) * 4 * DY;
+          const dx1 = (rng() - 0.5) * 5 * DX;
+          const dy1 = (rng() - 0.5) * 2.5 * DY;
+          g.moveTo(cx2, cy2);
+          g.lineTo(cx2 + dx1, cy2 + dy1);
           if (rng() < 0.5) {
-            g.moveTo(cx + dx1 * 0.6, cy + dy1 * 0.6);
-            g.lineTo(cx + dx1 * 0.6 + (rng() - 0.5) * 3, cy + dy1 * 0.6 + (rng() - 0.5) * 2);
+            g.moveTo(cx2 + dx1 * 0.6, cy2 + dy1 * 0.6);
+            g.lineTo(cx2 + dx1 * 0.6 + (rng() - 0.5) * 3 * DX, cy2 + dy1 * 0.6 + (rng() - 0.5) * 2 * DY);
           }
           g.stroke({ color: darkenColor(baseColor, 25), alpha: 0.4, width: 0.5 });
         }
-        // Lichen/moss patches
         if (rng() < 0.15) {
-          const mx = sx + (rng() - 0.5) * 8;
-          const my = sy + (rng() - 0.5) * 3;
-          g.ellipse(mx, my, 1.5 + rng(), 0.8 + rng() * 0.5);
+          const mx = sx + (rng() - 0.5) * 8 * DX;
+          const my = sy + (rng() - 0.5) * 3 * DY;
+          g.ellipse(mx, my, (1.5 + rng()) * DX, (0.8 + rng() * 0.5) * DY);
           g.fill({ color: 0x5a7a3a, alpha: 0.3 });
         }
-        // Stone texture dots
         const stoneCount = Math.floor(rng() * 3);
         for (let i = 0; i < stoneCount; i++) {
-          const dotX = sx + (rng() - 0.5) * 12;
-          const dotY = sy + (rng() - 0.5) * 5;
+          const dotX = sx + (rng() - 0.5) * 12 * DX;
+          const dotY = sy + (rng() - 0.5) * 5 * DY;
           g.circle(dotX, dotY, 0.3);
           g.fill({ color: lightenColor(baseColor, 10 + Math.floor(rng() * 15)), alpha: 0.25 });
         }
@@ -304,33 +305,27 @@ export class TileMap {
       }
 
       case TileType.FOREST: {
-        // Forest floor — fallen leaves, twigs, undergrowth
-        // Leaf scatter
         const leafCount = 2 + Math.floor(rng() * 3);
         for (let i = 0; i < leafCount; i++) {
-          const lx = sx + (rng() - 0.5) * 12;
-          const ly = sy + (rng() - 0.5) * 5;
+          const lx = sx + (rng() - 0.5) * 12 * DX;
+          const ly = sy + (rng() - 0.5) * 5 * DY;
           const leafColor = [0x7a5a1a, 0x8a6a2a, 0x5a4a12, 0x6a5a18][Math.floor(rng() * 4)];
           g.ellipse(lx, ly, 0.8 + rng() * 0.5, 0.4 + rng() * 0.3);
           g.fill({ color: leafColor, alpha: 0.4 });
         }
-        // Small twig
         if (rng() < 0.2) {
-          const twx = sx + (rng() - 0.5) * 10;
-          const twy = sy + (rng() - 0.5) * 4;
+          const twx = sx + (rng() - 0.5) * 10 * DX;
+          const twy = sy + (rng() - 0.5) * 4 * DY;
           g.moveTo(twx, twy);
-          g.lineTo(twx + (rng() - 0.5) * 5, twy + (rng() - 0.5) * 2);
+          g.lineTo(twx + (rng() - 0.5) * 5 * DX, twy + (rng() - 0.5) * 2 * DY);
           g.stroke({ color: 0x5a3a1a, alpha: 0.3, width: 0.5 });
         }
-        // Mushroom
         if (rng() < 0.04) {
-          const mx = sx + (rng() - 0.5) * 8;
-          const my = sy + (rng() - 0.5) * 3;
-          // Stem
-          g.rect(mx - 0.3, my - 1, 0.6, 1.5);
+          const mx = sx + (rng() - 0.5) * 8 * DX;
+          const my = sy + (rng() - 0.5) * 3 * DY;
+          g.rect(mx - 0.3, my - 1 * DY, 0.6, 1.5 * DY);
           g.fill({ color: 0xddddbb, alpha: 0.6 });
-          // Cap
-          g.ellipse(mx, my - 1.3, 1.2, 0.7);
+          g.ellipse(mx, my - 1.3 * DY, 1.2, 0.7 * DY);
           g.fill({ color: 0xcc4422, alpha: 0.6 });
         }
         break;

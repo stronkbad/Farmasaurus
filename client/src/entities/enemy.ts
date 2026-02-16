@@ -2,6 +2,7 @@ import { Container, Graphics, Text } from 'pixi.js';
 import { worldToScreen } from '../rendering/isometric';
 import type { EnemyState } from '@shared/messages';
 import { HIT_FLASH_MS } from '@shared/constants';
+import { getTileElevation, Z_PIXEL_HEIGHT } from '@shared/terrain';
 
 // Draw at 4x resolution, scale down for crisp detail
 const S = 4;
@@ -766,9 +767,17 @@ export class EnemyEntity {
     this.worldX = this.#fromX + (this.#toX - this.#fromX) * p;
     this.worldY = this.#fromY + (this.#toY - this.#fromY) * p;
 
+    // Interpolate elevation between from-tile and to-tile
+    const fromZ = getTileElevation(Math.round(this.#fromX), Math.round(this.#fromY));
+    const toZ = getTileElevation(Math.round(this.#toX), Math.round(this.#toY));
+    const z = fromZ + (toZ - fromZ) * p;
+
     const screen = worldToScreen(this.worldX, this.worldY);
     this.container.x = screen.screenX;
-    this.container.y = screen.screenY;
+    this.container.y = screen.screenY - z * Z_PIXEL_HEIGHT;
+
+    // Isometric depth for correct sort order (unaffected by elevation)
+    this.container.zIndex = Math.floor((this.worldX + this.worldY) * 100);
   }
 
   update(_dt: number): void {

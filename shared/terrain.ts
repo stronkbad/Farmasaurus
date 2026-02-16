@@ -69,3 +69,62 @@ export function isTerrainWalkable(x: number, y: number): boolean {
   const type = getTileType(x, y);
   return type !== TileType.DEEP_WATER && type !== TileType.SHALLOW_WATER;
 }
+
+// ===== Elevation System =====
+
+/** Screen pixels of vertical offset per Z unit */
+export const Z_PIXEL_HEIGHT = 4;
+
+/** Maximum Z difference between adjacent tiles that allows walking */
+export const STEP_HEIGHT = 2;
+
+/**
+ * Returns integer elevation Z (0–15) for a tile.
+ * Uses a continuous mapping from the raw terrain noise to avoid
+ * discontinuous jumps at biome boundaries.
+ */
+export function getTileElevation(x: number, y: number): number {
+  const type = getTileType(x, y);
+
+  // Water is always sea level
+  if (type === TileType.DEEP_WATER || type === TileType.SHALLOW_WATER) return 0;
+
+  // Use the same noise as biome selection for a continuous elevation curve
+  const edgeDist = Math.min(x, y, WORLD_TILES_X - 1 - x, WORLD_TILES_Y - 1 - y);
+  const edgeFade = Math.min(edgeDist / 4, 1);
+  const e = fbmNoise(x * 0.08, y * 0.08, TERRAIN_SEED, 4) * edgeFade;
+
+  // Continuous mapping: sand/grass border (e≈0.3) → Z=1, rock peaks (e≈1.0) → Z=15
+  // This avoids biome-boundary cliffs because Z depends only on the smooth noise value
+  const z = Math.round(1 + (e - 0.28) * 18);
+  return Math.max(1, Math.min(15, z));
+}
+
+/**
+ * Returns corner heights for a tile's 4 diamond vertices.
+ * Each corner is the average of the 4 tiles sharing that vertex.
+ * Order: [north (top), east (right), south (bottom), west (left)]
+ */
+export function getTileCornerHeights(x: number, y: number): [number, number, number, number] {
+  const c  = getTileElevation(x, y);
+  const n  = getTileElevation(x, y - 1);
+  const s  = getTileElevation(x, y + 1);
+  const e  = getTileElevation(x + 1, y);
+  const w  = getTileElevation(x - 1, y);
+  const ne = getTileElevation(x + 1, y - 1);
+  const nw = getTileElevation(x - 1, y - 1);
+  const se = getTileElevation(x + 1, y + 1);
+  const sw = getTileElevation(x - 1, y + 1);
+
+  return [
+    (c + n + nw + w) / 4,  // north (top vertex)
+    (c + n + ne + e) / 4,  // east (right vertex)
+    (c + s + se + e) / 4,  // south (bottom vertex)
+    (c + s + sw + w) / 4,  // west (left vertex)
+  ];
+}
+
+/** Returns true if movement between two tiles is valid considering elevation */
+export function isElevationWalkable(fromX: number, fromY: number, toX: number, toY: number): boolean {
+  return Math.abs(getTileElevation(fromX, fromY) - getTileElevation(toX, toY)) <= STEP_HEIGHT;
+}

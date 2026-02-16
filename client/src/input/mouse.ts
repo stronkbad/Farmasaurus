@@ -31,6 +31,7 @@ export class MouseInput {
   }
 
   #onClick(e: MouseEvent): void {
+    if (e.button !== 0) return; // Only handle left-click (attacks); right-click is movement
     const rect = this.#canvas!.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;

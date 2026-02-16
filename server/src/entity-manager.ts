@@ -8,7 +8,7 @@ import {
   ENEMY_WANDER_INTERVAL_MS, ENEMY_LEASH_RANGE, ENEMY_RESPAWN_MS,
 } from '../../shared/constants';
 import { DIRECTION, DIR_DX, DIR_DY, type Direction, EntityType } from '../../shared/types';
-import { isTerrainWalkable } from '../../shared/terrain';
+import { isTerrainWalkable, isElevationWalkable } from '../../shared/terrain';
 
 interface ServerEnemy {
   id: string;
@@ -63,10 +63,13 @@ export class EntityManager {
     return this.#occupied.has(tileKey(x, y));
   }
 
-  isTileWalkable(x: number, y: number): boolean {
+  isTileWalkable(x: number, y: number, fromX?: number, fromY?: number): boolean {
     if (x < 1 || y < 1 || x >= WORLD_TILES_X - 1 || y >= WORLD_TILES_Y - 1) return false;
     if (this.#occupied.has(tileKey(x, y))) return false;
     if (!isTerrainWalkable(x, y)) return false;
+    if (fromX !== undefined && fromY !== undefined) {
+      if (!isElevationWalkable(fromX, fromY, x, y)) return false;
+    }
     return true;
   }
 
@@ -237,7 +240,14 @@ export class EntityManager {
     if (dx === 0 && dy === 0) return false;
     const nx = enemy.tileX + dx;
     const ny = enemy.tileY + dy;
-    if (!this.isTileWalkable(nx, ny)) return false;
+    // Diagonal validation: both perpendicular cardinal dirs must be passable
+    if (dx !== 0 && dy !== 0) {
+      if (!this.isTileWalkable(enemy.tileX + dx, enemy.tileY, enemy.tileX, enemy.tileY) ||
+          !this.isTileWalkable(enemy.tileX, enemy.tileY + dy, enemy.tileX, enemy.tileY)) {
+        return false;
+      }
+    }
+    if (!this.isTileWalkable(nx, ny, enemy.tileX, enemy.tileY)) return false;
 
     enemy.fromX = enemy.tileX;
     enemy.fromY = enemy.tileY;
