@@ -177,6 +177,21 @@
         z-index: 100;
         display: none;
       }
+      #debug-metrics {
+        position: fixed;
+        top: 8px; left: 8px;
+        background: rgba(0,0,0,0.85);
+        border: 1px solid #444;
+        padding: 6px 10px;
+        font-size: 11px;
+        font-family: monospace;
+        color: #0f0;
+        z-index: 200;
+        white-space: pre;
+        display: none;
+        pointer-events: none;
+        line-height: 1.4;
+      }
     </style>
   </head>
   <body>
@@ -214,6 +229,7 @@
     </div>
 
     <div id="coords"></div>
+    <div id="debug-metrics"></div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

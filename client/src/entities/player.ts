@@ -38,6 +38,8 @@ export class PlayerEntity {
 
   worldX = 0;
   worldY = 0;
+  get tileX(): number { return Math.round(this.#toX); }
+  get tileY(): number { return Math.round(this.#toY); }
   id: string;
   name: string;
   set isRunning(val: boolean) { this.#isRunning = val; }
@@ -427,14 +429,15 @@ export class PlayerEntity {
 
   #updateVisualPosition(): void {
     const t = this.#moveProgress;
-    const p = t * t * (3 - 2 * t);
-    this.worldX = this.#fromX + (this.#toX - this.#fromX) * p;
-    this.worldY = this.#fromY + (this.#toY - this.#fromY) * p;
+    // Linear interpolation — constant speed during tile transitions.
+    // Walk bob animation is handled separately in update().
+    this.worldX = this.#fromX + (this.#toX - this.#fromX) * t;
+    this.worldY = this.#fromY + (this.#toY - this.#fromY) * t;
 
     // Interpolate elevation between from-tile and to-tile
     const fromZ = getTileElevation(Math.round(this.#fromX), Math.round(this.#fromY));
     const toZ = getTileElevation(Math.round(this.#toX), Math.round(this.#toY));
-    const z = fromZ + (toZ - fromZ) * p;
+    const z = fromZ + (toZ - fromZ) * t;
 
     const screen = worldToScreen(this.worldX, this.worldY);
     this.container.x = screen.screenX;
@@ -457,8 +460,8 @@ export class PlayerEntity {
       this.#bodyContainer.x = this.#attackDirX * lunge * lungeAmount;
       this.#bodyContainer.y = -this.#attackDirY * lunge * lungeAmount - Math.sin(atkProgress * Math.PI) * 2;
     } else if (this.#isMoving) {
-      const bobFreq = this.#isRunning ? 6 : 4;
-      const bobAmp = this.#isRunning ? 3.5 : 2.5;
+      const bobFreq = this.#isRunning ? 2 : 1;
+      const bobAmp = this.#isRunning ? 2 : 1.5;
       const stepCycle = Math.sin(this.#moveProgress * Math.PI * bobFreq);
       this.#bodyContainer.y = -Math.abs(stepCycle) * bobAmp;
       this.#bodyContainer.x = 0;
@@ -470,7 +473,7 @@ export class PlayerEntity {
     if (isAttacking) {
       this.#drawBody(0, true);
     } else if (this.#isMoving) {
-      const bobFreq = this.#isRunning ? 6 : 4;
+      const bobFreq = this.#isRunning ? 2 : 1;
       const stepCycle = Math.sin(this.#moveProgress * Math.PI * bobFreq);
       const frame = stepCycle > 0.2 ? 1 : stepCycle < -0.2 ? 2 : 0;
       this.#drawBody(frame, false);

@@ -33,12 +33,15 @@ export class Camera {
     this.#screenHeight = height;
   }
 
-  update(): void {
+  update(dt: number): void {
     const desiredX = this.#screenWidth / 2 - this.#targetX * this.#zoom;
     const desiredY = this.#screenHeight / 2 - this.#targetY * this.#zoom;
 
-    this.#worldContainer.x += (desiredX - this.#worldContainer.x) * this.#lerp;
-    this.#worldContainer.y += (desiredY - this.#worldContainer.y) * this.#lerp;
+    // Frame-rate-independent exponential lerp — consistent smoothing
+    // regardless of dt variance. At 60fps (dt=16.67), alpha ≈ 0.18.
+    const alpha = 1 - Math.pow(1 - this.#lerp, dt / 16.67);
+    this.#worldContainer.x += (desiredX - this.#worldContainer.x) * alpha;
+    this.#worldContainer.y += (desiredY - this.#worldContainer.y) * alpha;
   }
 
   snapTo(screenX: number, screenY: number): void {

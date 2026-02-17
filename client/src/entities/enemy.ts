@@ -1,7 +1,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { worldToScreen } from '../rendering/isometric';
 import type { EnemyState } from '@shared/messages';
-import { HIT_FLASH_MS } from '@shared/constants';
+import { HIT_FLASH_MS, ENEMY_SPIDER_MOVE_MS, ENEMY_SKELETON_MOVE_MS, ENEMY_ORC_MOVE_MS } from '@shared/constants';
 import { getTileElevation, Z_PIXEL_HEIGHT } from '@shared/terrain';
 
 // Draw at 4x resolution, scale down for crisp detail
@@ -20,6 +20,7 @@ export class EnemyEntity {
   #fromX = 0; #fromY = 0;
   #toX = 0; #toY = 0;
   #moveProgress = 1;
+  #moveDuration = 800; // ms per tile, set from enemy type
   #lastFrame = -1;
 
   // Hit flash
@@ -30,6 +31,8 @@ export class EnemyEntity {
 
   worldX = 0;
   worldY = 0;
+  get tileX(): number { return Math.round(this.#toX); }
+  get tileY(): number { return Math.round(this.#toY); }
   id: string;
   enemyType: string;
   health = 20;
@@ -40,6 +43,9 @@ export class EnemyEntity {
   constructor(id: string, enemyType: string) {
     this.id = id;
     this.enemyType = enemyType;
+    this.#moveDuration = enemyType === 'SPIDER' ? ENEMY_SPIDER_MOVE_MS
+      : enemyType === 'SKELETON' ? ENEMY_SKELETON_MOVE_MS
+      : enemyType === 'ORC' ? ENEMY_ORC_MOVE_MS : 800;
     this.container = new Container();
 
     this.#bodyContainer = new Container();
@@ -763,14 +769,14 @@ export class EnemyEntity {
 
   #updateVisualPosition(): void {
     const t = this.#moveProgress;
-    const p = t * t * (3 - 2 * t);
-    this.worldX = this.#fromX + (this.#toX - this.#fromX) * p;
-    this.worldY = this.#fromY + (this.#toY - this.#fromY) * p;
+    // Linear interpolation — constant speed during tile transitions
+    this.worldX = this.#fromX + (this.#toX - this.#fromX) * t;
+    this.worldY = this.#fromY + (this.#toY - this.#fromY) * t;
 
     // Interpolate elevation between from-tile and to-tile
     const fromZ = getTileElevation(Math.round(this.#fromX), Math.round(this.#fromY));
     const toZ = getTileElevation(Math.round(this.#toX), Math.round(this.#toY));
-    const z = fromZ + (toZ - fromZ) * p;
+    const z = fromZ + (toZ - fromZ) * t;
 
     const screen = worldToScreen(this.worldX, this.worldY);
     this.container.x = screen.screenX;
@@ -780,11 +786,16 @@ export class EnemyEntity {
     this.container.zIndex = Math.floor((this.worldX + this.worldY) * 100);
   }
 
-  update(_dt: number): void {
+  update(dt: number): void {
+    // Advance move progress locally between server ticks (60fps interpolation)
+    if (this.isMoving && this.#moveProgress < 1) {
+      this.#moveProgress = Math.min(1, this.#moveProgress + dt / this.#moveDuration);
+    }
+
     // Walk animation
     if (this.isMoving && this.#moveProgress < 1) {
-      const stepCycle = Math.sin(this.#moveProgress * Math.PI * 4);
-      this.#bodyContainer.y = -Math.abs(stepCycle) * 2;
+      const stepCycle = Math.sin(this.#moveProgress * Math.PI * 2);
+      this.#bodyContainer.y = -Math.abs(stepCycle) * 1.5;
       const frame = stepCycle > 0.2 ? 1 : stepCycle < -0.2 ? 2 : 0;
       this.#drawBody(frame);
     } else {
@@ -794,7 +805,7 @@ export class EnemyEntity {
 
     // Recoil animation
     if (this.#recoilTimer > 0) {
-      this.#recoilTimer -= _dt;
+      this.#recoilTimer -= dt;
       const recoilPct = Math.max(0, this.#recoilTimer / HIT_FLASH_MS);
       const recoilAmount = recoilPct * 3;
       this.#bodyContainer.x = this.#recoilDirX * recoilAmount;
@@ -805,7 +816,7 @@ export class EnemyEntity {
 
     // Hit flash
     if (this.#hitFlashTimer > 0) {
-      this.#hitFlashTimer -= _dt;
+      this.#hitFlashTimer -= dt;
       const flashIntensity = this.#hitFlashTimer / HIT_FLASH_MS;
       this.#body.tint = flashIntensity > 0.5 ? 0xff4444 : 0xffffff;
       if (this.#hitFlashTimer <= 0) this.#body.tint = 0xffffff;

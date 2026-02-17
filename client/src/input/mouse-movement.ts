@@ -7,6 +7,8 @@ export interface MouseMovementState {
 }
 
 const DEAD_ZONE = 5; // pixels — ignore cursor within this radius of character
+const OCTANT_SIZE = Math.PI / 4; // 45 degrees per octant
+const HYSTERESIS = OCTANT_SIZE * 0.3; // must move 30% past boundary to change direction
 
 export class MouseMovementInput {
   #canvas: HTMLCanvasElement | null = null;
@@ -16,17 +18,31 @@ export class MouseMovementInput {
   #characterViewportX = 0;
   #characterViewportY = 0;
 
+  // Stateful octant — "Octants allowed but stateful. Hysteresis required."
+  #lastOctant = -1;
+  #lastAngle = 0;
+
+  // Pending click — survives even if button is released before next frame
+  #hasPendingClick = false;
+  #pendingClickScreenX = 0;
+  #pendingClickScreenY = 0;
+
   attach(canvas: HTMLCanvasElement): void {
     this.#canvas = canvas;
 
     canvas.addEventListener('mousedown', (e) => {
       if (e.button === 2) {
         this.#rightButtonDown = true;
+        this.#lastOctant = -1; // reset hysteresis on new click
         this.#updateCursorPos(e);
+        // Record the click so it's never lost between frames
+        this.#hasPendingClick = true;
+        this.#pendingClickScreenX = this.#cursorScreenX;
+        this.#pendingClickScreenY = this.#cursorScreenY;
       }
     });
 
-    canvas.addEventListener('mouseup', (e) => {
+    window.addEventListener('mouseup', (e) => {
       if (e.button === 2) this.#rightButtonDown = false;
     });
 
@@ -34,9 +50,8 @@ export class MouseMovementInput {
       this.#updateCursorPos(e);
     });
 
-    canvas.addEventListener('mouseleave', () => {
-      this.#rightButtonDown = false;
-    });
+    // Don't clear rightButtonDown on mouseleave — only clear on mouseup.
+    // Per architecture: "On release: stop queueing steps." Mouseleave is not a release.
 
     // Prevent context menu on right-click
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -54,7 +69,8 @@ export class MouseMovementInput {
     this.#characterViewportY = viewportY;
   }
 
-  /** Get current movement direction and run/walk state from right-click hold */
+  /** Get current movement direction and run/walk state from right-click hold.
+   *  Direction is stateful with hysteresis — won't flicker at octant boundaries. */
   getMovement(): MouseMovementState {
     if (!this.#rightButtonDown) {
       return { direction: null, running: false };
@@ -73,10 +89,30 @@ export class MouseMovementInput {
     let angle = Math.atan2(dy, dx) + Math.PI / 2;
     if (angle < 0) angle += Math.PI * 2;
 
-    // Divide into 8 octants of PI/4 each, offset by half-octant to center
-    const octant = Math.floor(((angle + Math.PI / 8) % (Math.PI * 2)) / (Math.PI / 4));
-    const direction = DIRECTION_BY_OCTANT[octant % 8];
+    let octant: number;
+    if (this.#lastOctant < 0) {
+      // First sample — compute raw octant
+      octant = Math.floor(((angle + OCTANT_SIZE / 2) % (Math.PI * 2)) / OCTANT_SIZE);
+    } else {
+      // Hysteresis: keep current octant unless angle moved past boundary + hysteresis band.
+      // Compute angular distance from the center of the current octant.
+      const currentCenter = this.#lastOctant * OCTANT_SIZE;
+      let diff = angle - currentCenter;
+      // Normalize to [-PI, PI]
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
 
+      if (Math.abs(diff) > OCTANT_SIZE / 2 + HYSTERESIS) {
+        // Moved far enough — recompute octant from raw angle
+        octant = Math.floor(((angle + OCTANT_SIZE / 2) % (Math.PI * 2)) / OCTANT_SIZE);
+      } else {
+        octant = this.#lastOctant;
+      }
+    }
+
+    this.#lastOctant = octant % 8;
+    this.#lastAngle = angle;
+    const direction = DIRECTION_BY_OCTANT[octant % 8];
     const running = distance > RUN_DISTANCE_THRESHOLD;
 
     return { direction, running };
@@ -85,4 +121,15 @@ export class MouseMovementInput {
   get isActive(): boolean {
     return this.#rightButtonDown;
   }
+
+  get cursorScreenX(): number { return this.#cursorScreenX; }
+  get cursorScreenY(): number { return this.#cursorScreenY; }
+
+  /** True if a right-click happened that hasn't been consumed yet */
+  get hasPendingClick(): boolean { return this.#hasPendingClick; }
+  get pendingClickScreenX(): number { return this.#pendingClickScreenX; }
+  get pendingClickScreenY(): number { return this.#pendingClickScreenY; }
+
+  /** Mark the pending click as handled */
+  consumeClick(): void { this.#hasPendingClick = false; }
 }

@@ -1,0 +1,272 @@
+Below is a **Claude-ready Markdown reference** you can drop directly into your repo (e.g. `MOVEMENT_ARCHITECTURE.md`).
+It is **prescriptive**, **implementation-oriented**, and written to be used as a *design contract*, not theory.
+
+---
+
+# Isometric MMO Movement Architecture (PIXI.js, Browser, Server-Authoritative)
+
+## Goals
+
+* Ultima Online–style feel (deliberate, grounded, predictable)
+* Smooth modern visuals (sub-pixel, interpolated)
+* Server authoritative (anti-cheat, deterministic)
+* No rubberbanding or intent jitter
+* Works at web latency and variable FPS
+
+---
+
+## Non-Goals
+
+* Continuous analog steering
+* FPS-style rewind/replay netcode
+* Client-authoritative physics
+* Frame-by-frame direction updates
+
+---
+
+## Core Principles
+
+### 1. Separate the Three Rates
+
+| Layer      | Rate                  | Responsibility          |
+| ---------- | --------------------- | ----------------------- |
+| Input      | Per frame             | Sample mouse / keyboard |
+| Simulation | Fixed tick (10–20 Hz) | Authoritative movement  |
+| Rendering  | 60–144 FPS            | Visual interpolation    |
+
+These **must never be coupled**.
+
+---
+
+### 2. Intent Is Discrete and Stateful
+
+* Direction and run/walk are **latched**
+* Intent only changes at **step boundaries**
+* Mouse movement *requests* a change, never forces one
+
+---
+
+### 3. Authority Is Tile-Based (Invisible to Player)
+
+* Server operates on integer logical coordinates
+* Tile size is **not** sprite size
+* World size = number of tiles, not tile resolution
+
+---
+
+## Coordinate Spaces
+
+### Logical Space (Server)
+
+```ts
+type TilePos = { x: number; y: number };
+```
+
+* Integer only
+* Used for collision, pathing, validation
+
+---
+
+### World Space (Client)
+
+```ts
+type WorldPos = { x: number; y: number }; // floats
+```
+
+* Derived from tiles
+* Used for interpolation and rendering
+
+---
+
+### Screen Space (Client)
+
+* Only used for drawing
+* Never used for movement intent
+
+---
+
+## Movement Model
+
+### Step-Based Movement
+
+* One logical step per direction
+* Fixed step duration (walk/run)
+* Client animates immediately
+* Server confirms or rejects
+
+Example values:
+
+```ts
+WALK_STEP_MS = 150
+RUN_STEP_MS  = 100
+```
+
+---
+
+### Movement State Machine (Client)
+
+```ts
+Idle
+ └──► Stepping
+        └──► Idle
+```
+
+Rules:
+
+* While `Stepping`, input does not change intent
+* At step end, intent may be re-evaluated
+
+---
+
+## Input Handling (Mouse)
+
+### Right-Click Behavior
+
+* On mouse down:
+
+  * Compute direction **once**
+  * Latch direction + run mode
+* While held:
+
+  * Direction remains fixed
+* On step completion:
+
+  * Re-evaluate mouse for next step
+* On release:
+
+  * Stop queueing steps
+
+---
+
+### Direction Stability Rules
+
+* Direction computed in **world space**
+* Camera movement must not affect intent
+* Octants allowed but **stateful**
+* Hysteresis required to change direction
+
+---
+
+## Client → Server Contract
+
+### Move Intent
+
+```ts
+{
+  seq: number,
+  dir: Direction,
+  run: boolean
+}
+```
+
+Sent:
+
+* Once per step
+* Never per frame
+
+---
+
+### Server Response
+
+```ts
+{
+  ack: number,
+  tileX: number,
+  tileY: number,
+  accepted: boolean
+}
+```
+
+---
+
+## Client Prediction Rules
+
+* Client assumes movement will succeed
+* Begins animation immediately
+* Server rejection:
+
+  * Cancels future queued steps
+  * Eases correction (never snap)
+* Large error only → teleport
+
+---
+
+## Interpolation (Rendering)
+
+Render position **chases** authoritative target:
+
+```ts
+renderPos += (targetPos - renderPos) * alpha
+```
+
+* Alpha ≈ 0.1–0.2
+* Applied in world space
+* Never in screen space
+
+---
+
+## Collision & Blocking
+
+### Client
+
+* Knows approximate walkability
+* Prevents obviously invalid steps
+
+### Server
+
+* Final authority
+* Rejects illegal tiles (water, height, blocking)
+
+---
+
+## Map & World Scale
+
+* Tiles are logical only
+* Visual scale is arbitrary
+* Large worlds achieved via:
+
+  * Chunk streaming
+  * Sparse entity density
+  * Camera culling
+
+---
+
+## Anti-Patterns (Do Not Do)
+
+* ❌ Recompute direction every frame
+* ❌ Apply server positions directly
+* ❌ Tie intent to viewport space
+* ❌ Toggle run/walk mid-step
+* ❌ Send mouse positions to server
+* ❌ Continuous velocity in tile worlds
+
+---
+
+## Why This Works
+
+* Eliminates feedback instability
+* Matches human perception thresholds
+* Hides latency without lying
+* Proven at scale (UO, Tibia, Albion)
+
+---
+
+## Implementation Order (Recommended)
+
+1. Step-based movement loop
+2. Latched intent input
+3. Server tile validation
+4. Client interpolation
+5. Correction smoothing
+6. Visual polish
+
+---
+
+## Design Invariant
+
+> **Simulation is discrete. Rendering is continuous. Intent is stable.**
+
+Break this and rubberbanding is guaranteed.
+
+---
+

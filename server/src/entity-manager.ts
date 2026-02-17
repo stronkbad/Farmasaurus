@@ -166,6 +166,44 @@ export class EntityManager {
     }
   }
 
+  /** Run AI logic for an idle enemy: chase, return, or wander. */
+  #runAI(enemy: ServerEnemy, playerPositions: { id: string; x: number; y: number }[]): void {
+    enemy.aiTimer -= TICK_MS;
+    if (enemy.attackCooldown > 0) enemy.attackCooldown -= TICK_MS;
+
+    let closest: { id: string; x: number; y: number; dist: number } | null = null;
+    for (const p of playerPositions) {
+      const dist = Math.max(Math.abs(p.x - enemy.tileX), Math.abs(p.y - enemy.tileY));
+      if (dist <= enemy.aggroRange && (!closest || dist < closest.dist)) {
+        closest = { ...p, dist };
+      }
+    }
+
+    if (closest) {
+      enemy.aiState = 'chase';
+      enemy.targetPlayerId = closest.id;
+      if (closest.dist <= 1) {
+        this.#faceToward(enemy, closest.x, closest.y);
+      } else {
+        this.#stepToward(enemy, closest.x, closest.y);
+      }
+    } else {
+      const distToSpawn = Math.max(Math.abs(enemy.tileX - enemy.spawnX), Math.abs(enemy.tileY - enemy.spawnY));
+      if (distToSpawn > ENEMY_LEASH_RANGE) {
+        enemy.aiState = 'return';
+        enemy.targetPlayerId = null;
+        this.#stepToward(enemy, enemy.spawnX, enemy.spawnY);
+      } else {
+        enemy.aiState = 'wander';
+        enemy.targetPlayerId = null;
+        if (enemy.aiTimer <= 0) {
+          enemy.aiTimer = ENEMY_WANDER_INTERVAL_MS + Math.random() * 1000;
+          this.#stepRandom(enemy);
+        }
+      }
+    }
+  }
+
   updateAll(playerPositions: { id: string; x: number; y: number }[]): void {
     for (const enemy of this.#enemies.values()) {
       if (enemy.health <= 0) continue;
@@ -173,46 +211,20 @@ export class EntityManager {
       if (enemy.moveState === 'moving') {
         enemy.moveTimer += TICK_MS;
         if (enemy.moveTimer >= enemy.moveDuration) {
+          // Move complete — chain into next move immediately (no idle gap)
+          const excess = enemy.moveTimer - enemy.moveDuration;
           enemy.moveState = 'idle';
           enemy.moveTimer = 0;
+          this.#runAI(enemy, playerPositions);
+          // #runAI may start a new move via #tryMove (TS can't track mutation through method calls)
+          if ((enemy.moveState as string) === 'moving') {
+            enemy.moveTimer = excess;
+          }
         }
         continue;
       }
 
-      enemy.aiTimer -= TICK_MS;
-      if (enemy.attackCooldown > 0) enemy.attackCooldown -= TICK_MS;
-
-      let closest: { id: string; x: number; y: number; dist: number } | null = null;
-      for (const p of playerPositions) {
-        const dist = Math.max(Math.abs(p.x - enemy.tileX), Math.abs(p.y - enemy.tileY));
-        if (dist <= enemy.aggroRange && (!closest || dist < closest.dist)) {
-          closest = { ...p, dist };
-        }
-      }
-
-      if (closest) {
-        enemy.aiState = 'chase';
-        enemy.targetPlayerId = closest.id;
-        if (closest.dist <= 1) {
-          this.#faceToward(enemy, closest.x, closest.y);
-        } else {
-          this.#stepToward(enemy, closest.x, closest.y);
-        }
-      } else {
-        const distToSpawn = Math.max(Math.abs(enemy.tileX - enemy.spawnX), Math.abs(enemy.tileY - enemy.spawnY));
-        if (distToSpawn > ENEMY_LEASH_RANGE) {
-          enemy.aiState = 'return';
-          enemy.targetPlayerId = null;
-          this.#stepToward(enemy, enemy.spawnX, enemy.spawnY);
-        } else {
-          enemy.aiState = 'wander';
-          enemy.targetPlayerId = null;
-          if (enemy.aiTimer <= 0) {
-            enemy.aiTimer = ENEMY_WANDER_INTERVAL_MS + Math.random() * 1000;
-            this.#stepRandom(enemy);
-          }
-        }
-      }
+      this.#runAI(enemy, playerPositions);
     }
   }
 

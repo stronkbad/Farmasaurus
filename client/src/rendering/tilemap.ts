@@ -1,6 +1,6 @@
 import { Container, Graphics } from 'pixi.js';
 import { TILE_WIDTH, TILE_HEIGHT, WORLD_TILES_X, WORLD_TILES_Y } from '@shared/constants';
-import { TileType, getTileType, getTileElevation, getTileCornerHeights, Z_PIXEL_HEIGHT, seededRandom } from '@shared/terrain';
+import { TileType, getTileType, getTileElevation, getTileCornerHeights, Z_PIXEL_HEIGHT, seededRandom, isTerrainWalkable, isElevationWalkable } from '@shared/terrain';
 import { worldToScreen } from './isometric';
 
 // Base color per tile type
@@ -29,7 +29,7 @@ const TILE_VARIANTS: Record<TileType, number[]> = {
   [TileType.FOREST]:        [0x2a5a1a, 0x2e5e1e, 0x265616, 0x32621e, 0x245214],
 };
 
-const VIEW_RADIUS = 60;
+const MAX_VIEW_RADIUS = 55;
 
 // Scale factors for tile detail offsets (designed at 32x16, scale to current tile size)
 const DX = TILE_WIDTH / 32;   // X-axis detail spread multiplier
@@ -70,30 +70,48 @@ export class TileMap {
   #tileGraphics: Graphics;
   #detailGraphics: Graphics;
   #decorGraphics: Graphics;
+  #hitboxGraphics: Graphics;
   #lastCenterX = -999;
   #lastCenterY = -999;
+  #lastZoom = -1;
+  #showHitboxes = false;
 
   constructor() {
     this.container = new Container();
     this.#tileGraphics = new Graphics();
     this.#detailGraphics = new Graphics();
     this.#decorGraphics = new Graphics();
+    this.#hitboxGraphics = new Graphics();
+    this.#hitboxGraphics.visible = false;
     this.container.addChild(this.#tileGraphics);
     this.container.addChild(this.#detailGraphics);
     this.container.addChild(this.#decorGraphics);
+    this.container.addChild(this.#hitboxGraphics);
   }
 
-  updateView(centerTileX: number, centerTileY: number): void {
+  set showHitboxes(val: boolean) {
+    this.#showHitboxes = val;
+    this.#hitboxGraphics.visible = val;
+  }
+
+  updateView(centerTileX: number, centerTileY: number, zoom = 2): void {
     const cx = Math.floor(centerTileX);
     const cy = Math.floor(centerTileY);
 
-    if (Math.abs(cx - this.#lastCenterX) < 2 && Math.abs(cy - this.#lastCenterY) < 2) return;
+    // Force redraw if zoom changed significantly
+    const zoomChanged = Math.abs(zoom - this.#lastZoom) > 0.1;
+    if (!zoomChanged && Math.abs(cx - this.#lastCenterX) < 2 && Math.abs(cy - this.#lastCenterY) < 2) return;
     this.#lastCenterX = cx;
     this.#lastCenterY = cy;
+    this.#lastZoom = zoom;
+
+    // Dynamic view radius based on zoom — fewer tiles when zoomed in
+    const VIEW_RADIUS = Math.min(MAX_VIEW_RADIUS, Math.ceil(960 / (TILE_HEIGHT * zoom)) + 5);
 
     this.#tileGraphics.clear();
     this.#detailGraphics.clear();
     this.#decorGraphics.clear();
+    this.#hitboxGraphics.clear();
 
     const hw = TILE_WIDTH / 2 + 1;
     const hh = TILE_HEIGHT / 2 + 1;
@@ -133,6 +151,34 @@ export class TileMap {
           { x: sx - hw, y: sy - cW * Z_PIXEL_HEIGHT },
         ]);
         this.#tileGraphics.fill({ color });
+
+        // Hitbox border on top layer (only when debug enabled)
+        if (this.#showHitboxes) {
+          const walkable = isTerrainWalkable(tx, ty);
+          if (!walkable) {
+            this.#hitboxGraphics.poly([
+              { x: sx, y: sy - hh - cN * Z_PIXEL_HEIGHT },
+              { x: sx + hw, y: sy - cE * Z_PIXEL_HEIGHT },
+              { x: sx, y: sy + hh - cS * Z_PIXEL_HEIGHT },
+              { x: sx - hw, y: sy - cW * Z_PIXEL_HEIGHT },
+            ]);
+            this.#hitboxGraphics.stroke({ color: 0xff0000, width: 2, alpha: 0.8 });
+          } else {
+            const hasCliff = !isElevationWalkable(tx, ty, tx + 1, ty) ||
+                             !isElevationWalkable(tx, ty, tx - 1, ty) ||
+                             !isElevationWalkable(tx, ty, tx, ty + 1) ||
+                             !isElevationWalkable(tx, ty, tx, ty - 1);
+            if (hasCliff) {
+              this.#hitboxGraphics.poly([
+                { x: sx, y: sy - hh - cN * Z_PIXEL_HEIGHT },
+                { x: sx + hw, y: sy - cE * Z_PIXEL_HEIGHT },
+                { x: sx, y: sy + hh - cS * Z_PIXEL_HEIGHT },
+                { x: sx - hw, y: sy - cW * Z_PIXEL_HEIGHT },
+              ]);
+              this.#hitboxGraphics.stroke({ color: 0xff8800, width: 1.5, alpha: 0.6 });
+            }
+          }
+        }
 
         const rng = seededRandom(tx * 12345 + ty * 67890);
 

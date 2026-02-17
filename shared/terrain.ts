@@ -76,7 +76,7 @@ export function isTerrainWalkable(x: number, y: number): boolean {
 export const Z_PIXEL_HEIGHT = 4;
 
 /** Maximum Z difference between adjacent tiles that allows walking */
-export const STEP_HEIGHT = 2;
+export const STEP_HEIGHT = 4;
 
 /**
  * Returns integer elevation Z (0–15) for a tile.
@@ -96,7 +96,7 @@ export function getTileElevation(x: number, y: number): number {
 
   // Continuous mapping: sand/grass border (e≈0.3) → Z=1, rock peaks (e≈1.0) → Z=15
   // This avoids biome-boundary cliffs because Z depends only on the smooth noise value
-  const z = Math.round(1 + (e - 0.28) * 18);
+  const z = Math.round(1 + (e - 0.28) * 12);
   return Math.max(1, Math.min(15, z));
 }
 

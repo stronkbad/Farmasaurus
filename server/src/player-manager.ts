@@ -1,6 +1,6 @@
 import { WebSocket } from 'ws';
 import { type ClientInputMessage } from '../../shared/messages';
-import type { PlayerState, ServerCombatMissMessage } from '../../shared/messages';
+import type { PlayerState, ServerCombatMissMessage, ServerMoveAckMessage } from '../../shared/messages';
 import { ServerMessageType } from '../../shared/messages';
 import {
   PLAYER_WALK_MS, PLAYER_RUN_MS, PLAYER_MAX_HEALTH, PLAYER_ATTACK, PLAYER_DEFENSE,
@@ -19,6 +19,7 @@ export interface ServerPlayer {
   moveDuration: number;
   queuedDirection: Direction | null;
   queuedRunning: boolean;
+  queuedSeq: number;
   isRunning: boolean;
   direction: Direction;
   health: number; maxHealth: number;
@@ -53,6 +54,7 @@ export class PlayerManager {
       moveDuration: PLAYER_WALK_MS,
       queuedDirection: null,
       queuedRunning: false,
+      queuedSeq: 0,
       isRunning: false,
       direction: DIRECTION.DOWN,
       health: PLAYER_MAX_HEALTH,
@@ -73,8 +75,17 @@ export class PlayerManager {
   handleInput(playerId: string, input: ClientInputMessage): void {
     const player = this.#players.get(playerId);
     if (!player || player.isDead) return;
+
+    // If overwriting an unconsumed non-null direction with null (player stopped
+    // before the server processed the queued move), reject the old direction so
+    // the client knows its prediction was wrong.
+    if (player.queuedDirection !== null && input.direction === null) {
+      this.#sendMoveAck(player, player.queuedSeq, false);
+    }
+
     player.queuedDirection = input.direction;
     player.queuedRunning = input.running ?? false;
+    player.queuedSeq = input.seq;
     player.lastProcessedSeq = input.seq;
   }
 
@@ -141,6 +152,43 @@ export class PlayerManager {
     }
   }
 
+  /** Try to start a move in the given direction. Returns true if the move started. */
+  #tryMove(player: ServerPlayer, dir: Direction, isTileWalkable: (x: number, y: number, fromX?: number, fromY?: number) => boolean): boolean {
+    let dx = DIR_DX[dir];
+    let dy = DIR_DY[dir];
+    if (dx === 0 && dy === 0) return false;
+
+    setDirection(player, dx, dy);
+
+    // Try full diagonal first, then fall back to cardinal components
+    let canMove = false;
+    if (dx !== 0 && dy !== 0) {
+      const perpOk = isTileWalkable(player.tileX + dx, player.tileY, player.tileX, player.tileY) &&
+                      isTileWalkable(player.tileX, player.tileY + dy, player.tileX, player.tileY);
+      if (perpOk && isTileWalkable(player.tileX + dx, player.tileY + dy, player.tileX, player.tileY)) {
+        canMove = true;
+      } else if (isTileWalkable(player.tileX + dx, player.tileY, player.tileX, player.tileY)) {
+        dy = 0; canMove = true;
+      } else if (isTileWalkable(player.tileX, player.tileY + dy, player.tileX, player.tileY)) {
+        dx = 0; canMove = true;
+      }
+    } else {
+      canMove = isTileWalkable(player.tileX + dx, player.tileY + dy, player.tileX, player.tileY);
+    }
+
+    if (!canMove) return false;
+
+    player.fromX = player.tileX;
+    player.fromY = player.tileY;
+    player.tileX = player.tileX + dx;
+    player.tileY = player.tileY + dy;
+    player.moveState = 'moving';
+    player.moveTimer = 0;
+    player.isRunning = player.queuedRunning;
+    player.moveDuration = player.isRunning ? PLAYER_RUN_MS : PLAYER_WALK_MS;
+    return true;
+  }
+
   updateAll(isTileWalkable: (x: number, y: number, fromX?: number, fromY?: number) => boolean): void {
     for (const player of this.#players.values()) {
       if (player.isDead) continue;
@@ -148,42 +196,49 @@ export class PlayerManager {
       if (player.moveState === 'moving') {
         player.moveTimer += TICK_MS;
         if (player.moveTimer >= player.moveDuration) {
-          player.moveState = 'idle';
-          player.moveTimer = 0;
+          // Move complete — chain into next move if a NEW intent arrived
+          const excess = player.moveTimer - player.moveDuration;
+          const dir = player.queuedDirection;
+          if (dir) {
+            const seq = player.queuedSeq;
+            player.queuedDirection = null; // consume — prevents stale reuse
+            const accepted = this.#tryMove(player, dir, isTileWalkable);
+            if (accepted) {
+              player.moveTimer = excess;
+            } else {
+              player.moveState = 'idle';
+              player.moveTimer = 0;
+            }
+            this.#sendMoveAck(player, seq, accepted);
+          } else {
+            player.moveState = 'idle';
+            player.moveTimer = 0;
+          }
         }
         continue;
       }
 
+      // Idle — try to start a new move
       const dir = player.queuedDirection;
-      if (!dir) continue;
-
-      const dx = DIR_DX[dir];
-      const dy = DIR_DY[dir];
-      if (dx === 0 && dy === 0) continue;
-
-      const nx = player.tileX + dx;
-      const ny = player.tileY + dy;
-
-      setDirection(player, dx, dy);
-
-      // Diagonal validation: both perpendicular cardinal dirs must be passable
-      if (dx !== 0 && dy !== 0) {
-        if (!isTileWalkable(player.tileX + dx, player.tileY, player.tileX, player.tileY) ||
-            !isTileWalkable(player.tileX, player.tileY + dy, player.tileX, player.tileY)) {
-          continue;
-        }
+      if (dir) {
+        const seq = player.queuedSeq;
+        player.queuedDirection = null; // consume — one intent per step
+        const accepted = this.#tryMove(player, dir, isTileWalkable);
+        this.#sendMoveAck(player, seq, accepted);
       }
+    }
+  }
 
-      if (!isTileWalkable(nx, ny, player.tileX, player.tileY)) continue;
-
-      player.fromX = player.tileX;
-      player.fromY = player.tileY;
-      player.tileX = nx;
-      player.tileY = ny;
-      player.moveState = 'moving';
-      player.moveTimer = 0;
-      player.isRunning = player.queuedRunning;
-      player.moveDuration = player.isRunning ? PLAYER_RUN_MS : PLAYER_WALK_MS;
+  #sendMoveAck(player: ServerPlayer, seq: number, accepted: boolean): void {
+    if (player.ws.readyState === WebSocket.OPEN) {
+      const msg: ServerMoveAckMessage = {
+        type: ServerMessageType.MOVE_ACK,
+        seq,
+        tileX: player.tileX,
+        tileY: player.tileY,
+        accepted,
+      };
+      player.ws.send(JSON.stringify(msg));
     }
   }
 
