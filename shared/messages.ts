@@ -22,7 +22,7 @@ export type ClientMessage = ClientJoinMessage | ClientInputMessage | ClientChatM
 export enum ServerMessageType {
   WELCOME = 'WELCOME',
   STATE_UPDATE = 'STATE_UPDATE',
-  MOVE_ACK = 'MOVE_ACK',
+
   PLAYER_JOINED = 'PLAYER_JOINED',
   PLAYER_LEFT = 'PLAYER_LEFT',
   CHAT = 'CHAT',
@@ -73,7 +73,7 @@ export interface ServerPlayerLeftMessage { type: ServerMessageType.PLAYER_LEFT; 
 export interface ServerChatMessage { type: ServerMessageType.CHAT; playerId: string; name: string; text: string; }
 export interface ServerDamageMessage { type: ServerMessageType.DAMAGE; targetId: string; damage: number; attackerId: string; targetHealth: number; }
 export interface ServerEntityDeathMessage { type: ServerMessageType.ENTITY_DEATH; entityId: string; killerId: string; entityType: string; }
-export interface ServerMoveAckMessage { type: ServerMessageType.MOVE_ACK; seq: number; tileX: number; tileY: number; accepted: boolean; }
+
 export interface ServerCombatMissMessage { type: ServerMessageType.COMBAT_MISS; targetId: string; attackerId: string; }
 
-export type ServerMessage = ServerWelcomeMessage | ServerStateUpdateMessage | ServerMoveAckMessage | ServerPlayerJoinedMessage | ServerPlayerLeftMessage | ServerChatMessage | ServerDamageMessage | ServerEntityDeathMessage | ServerCombatMissMessage;
+export type ServerMessage = ServerWelcomeMessage | ServerStateUpdateMessage | ServerPlayerJoinedMessage | ServerPlayerLeftMessage | ServerChatMessage | ServerDamageMessage | ServerEntityDeathMessage | ServerCombatMissMessage;

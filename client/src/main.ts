@@ -15,7 +15,6 @@ import {
   ServerMessageType,
   type ServerMessage,
   type ServerStateUpdateMessage,
-  type ServerMoveAckMessage,
   type ServerWelcomeMessage,
   type ServerPlayerJoinedMessage,
   type ServerPlayerLeftMessage,
@@ -99,6 +98,9 @@ let predictedMoveDuration = PLAYER_WALK_MS;
 let predictedIsRunning = false;
 let predictedDirection: Direction | null = null; // latched direction for current step
 let predictedMoveState: 'idle' | 'moving' = 'idle';
+
+// Gambetta-style input buffer: stores all inputs not yet acknowledged by server
+const pendingInputs: { seq: number; direction: Direction; running: boolean }[] = [];
 
 // Click-to-move target
 let moveTargetTileX: number | null = null;
@@ -246,24 +248,6 @@ async function main() {
         break;
       }
 
-      case ServerMessageType.MOVE_ACK: {
-        const ack = msg as ServerMoveAckMessage;
-        if (!ack.accepted) {
-          // Server rejected the move — reset prediction to server's authoritative position.
-          // This feels like a "bump" into a wall, not a rubber-band rewind.
-          predictedTileX = ack.tileX;
-          predictedTileY = ack.tileY;
-          predictedFromX = ack.tileX;
-          predictedFromY = ack.tileY;
-          predictedMoveState = 'idle';
-          predictedMoveTimer = 0;
-          predictedDirection = null;
-          moveTargetTileX = null;
-          moveTargetTileY = null;
-        }
-        break;
-      }
-
       case ServerMessageType.PLAYER_JOINED: {
         const joinMsg = msg as ServerPlayerJoinedMessage;
         if (joinMsg.player.id !== myPlayerId) {
@@ -381,24 +365,38 @@ async function main() {
           camera.snapTo(screen.screenX, screen.screenY - spawnZ * Z_PIXEL_HEIGHT);
         }
 
-        // Update health/stats only (NOT visual position or direction — those are prediction-driven)
         localPlayer.health = ps.health;
         localPlayer.maxHealth = ps.maxHealth;
         localPlayer.name = ps.name;
-        // Direction is set from prediction below, not from server (avoids 33ms lag flicker)
 
-        // Server reconciliation: MOVE_ACK handles per-step validation.
-        // This is only a safety net for extreme drift (network hiccup, reconnect, etc).
-        const drift = Math.max(
-          Math.abs(ps.x - predictedTileX),
-          Math.abs(ps.y - predictedTileY),
-        );
-        if (drift > 3) {
-          // Emergency teleport — something seriously wrong
-          predictedTileX = ps.x;
-          predictedTileY = ps.y;
-          predictedFromX = ps.x;
-          predictedFromY = ps.y;
+        // ── Gambetta reconciliation ──
+        // 1. Drop all inputs the server has already processed
+        const ack = update.ack;
+        while (pendingInputs.length > 0 && pendingInputs[0].seq <= ack) {
+          pendingInputs.shift();
+        }
+
+        // 2. Start from server's authoritative position
+        let replayX = ps.x;
+        let replayY = ps.y;
+
+        // 3. Replay all unacknowledged inputs on top
+        for (const input of pendingInputs) {
+          const dx = DIR_DX[input.direction];
+          const dy = DIR_DY[input.direction];
+          const resolved = resolveMoveDirection(replayX, replayY, dx, dy);
+          if (resolved) {
+            replayX += resolved.dx;
+            replayY += resolved.dy;
+          }
+        }
+
+        // 4. If replay result differs from current prediction, correct
+        if (replayX !== predictedTileX || replayY !== predictedTileY) {
+          predictedTileX = replayX;
+          predictedTileY = replayY;
+          predictedFromX = replayX;
+          predictedFromY = replayY;
           predictedMoveState = 'idle';
           predictedMoveTimer = 0;
           predictedDirection = null;
@@ -580,6 +578,7 @@ async function main() {
             // Send intent for this new step (once per step, not per tick)
             if (socket.connected) {
               socket.send({ type: ClientMessageType.INPUT, direction: input.direction, seq: ++inputSeq, running: input.running });
+              pendingInputs.push({ seq: inputSeq, direction: input.direction, running: input.running });
             }
           } else if (moveTargetTileX !== null) {
             moveTargetTileX = null;
@@ -631,6 +630,7 @@ async function main() {
           // Send intent for this step (once per step, not per tick)
           if (socket.connected) {
             socket.send({ type: ClientMessageType.INPUT, direction: input.direction, seq: ++inputSeq, running: input.running });
+            pendingInputs.push({ seq: inputSeq, direction: input.direction, running: input.running });
           }
         } else if (moveTargetTileX !== null) {
           moveTargetTileX = null;
